@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import ExtraTreesRegressor
+from xgboost import XGBRegressor
 from sko.GA import GA
 import joblib
 import warnings
@@ -79,7 +79,7 @@ data_info = load_data_and_features()
 # ========== 加载模型 ==========
 @st.cache_resource
 def load_model():
-    model = joblib.load('Extra_Trees.pkl')
+    model = joblib.load('XGBoost.pkl')
     return model
 
 model = load_model()
