@@ -5,33 +5,28 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from xgboost import XGBRegressor
+import xgboost as xgb
 from sko.GA import GA
 import joblib
 import warnings
 warnings.filterwarnings('ignore')
 
-# 设置页面标题和布局
-st.set_page_config(page_title="Mg-MOF-74 吸附剂逆向设计", layout="wide")
-st.title("Mg-MOF-74 吸附剂逆向设计平台")
-st.markdown("基于已训练的 Extra Trees 模型，通过遗传算法逆向搜索满足目标吸附容量和环境条件的材料参数。")
+# 设置页面
+st.set_page_config(page_title="Mg-MOF-74 吸附剂逆向设计 (XGBoost)", layout="wide")
+st.title("Mg-MOF-74 吸附剂逆向设计平台 (XGBoost)")
+st.markdown("基于 XGBoost 模型，通过遗传算法逆向搜索满足目标吸附容量和环境条件的材料参数。")
 
-# ========== 缓存数据加载和特征提取 ==========
+# ========== 加载数据并提取特征信息 ==========
 @st.cache_data
 def load_data_and_features():
     df = pd.read_csv('Mg_MOF_74_独热编码.csv')
     X = df.drop('Adsorption_capacity_mmol_g', axis=1)
     y = df['Adsorption_capacity_mmol_g']
     
-    # 划分训练集和测试集（与模型训练一致）
+    # 划分训练集和测试集（仅用于获取统计信息）
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
-    # 标准化
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    
-    # 特征列
+    # 数值列和分类列定义（根据您的数据集）
     numeric_cols = ['Molar ratio', 'SBET_m2_g', 'Vpore_cm3_g']
     fixed_cols = ['Pressure_MPa', 'Temperature_K']
     cat_vars_names = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
@@ -50,7 +45,7 @@ def load_data_and_features():
     for var in cat_vars:
         cat_vars[var].sort()
     
-    # 单变量边界（基于训练数据）
+    # 单变量边界（基于训练数据，不扩展）
     numeric_bounds = {}
     for col in numeric_cols:
         numeric_bounds[col] = (X_train[col].min(), X_train[col].max())
@@ -62,10 +57,6 @@ def load_data_and_features():
     
     return {
         'X_train': X_train,
-        'X_test': X_test,
-        'y_train': y_train,
-        'y_test': y_test,
-        'scaler': scaler,
         'numeric_cols': numeric_cols,
         'fixed_cols': fixed_cols,
         'cat_vars': cat_vars,
@@ -76,17 +67,19 @@ def load_data_and_features():
 
 data_info = load_data_and_features()
 
-# ========== 加载模型 ==========
+# ========== 加载模型和标准化器 ==========
 @st.cache_resource
-def load_model():
+def load_model_and_scaler():
     model = joblib.load('XGBoost.pkl')
-    return model
+    scaler = joblib.load('scaler.pkl')
+    return model, scaler
 
-model = load_model()
+model, scaler = load_model_and_scaler()
 
-# ========== 定义目标函数和约束 ==========
-def constraint_penalty(x, data_info):
-    sbet = x[1]  # SBET_m2_g 是第二个连续变量
+# ========== 定义约束和目标函数 ==========
+def constraint_penalty(x):
+    """SBET/Vpore 比值约束的惩罚项"""
+    sbet = x[1]   # SBET_m2_g 是第二个连续变量
     vpore = x[2]  # Vpore_cm3_g 是第三个
     ratio = sbet / (vpore + 1e-6)
     q_low, q_high = data_info['ratio_bounds']
@@ -97,17 +90,19 @@ def constraint_penalty(x, data_info):
         penalty = 1000 * (ratio - q_high)
     return penalty
 
-def objective_func(x, T_target, P_target, Q_target, mode, data_info, model, scaler):
+def objective_func(x, T_target, P_target, Q_target, mode):
+    """遗传算法目标函数"""
     n_cont = len(data_info['numeric_cols'])
     cont_vals = x[:n_cont]
     cat_indices = x[n_cont:].astype(int)
 
-    # 索引修正
+    # 索引合法性修正
     cat_vars = data_info['cat_vars']
     for j, (var, cats) in enumerate(cat_vars.items()):
         if cat_indices[j] < 0 or cat_indices[j] >= len(cats):
             cat_indices[j] = np.clip(cat_indices[j], 0, len(cats)-1)
 
+    # 构建特征向量
     x_vec = np.zeros(len(data_info['all_cols']))
     feature_columns = data_info['all_cols']
 
@@ -116,13 +111,13 @@ def objective_func(x, T_target, P_target, Q_target, mode, data_info, model, scal
         idx = feature_columns.index(col)
         x_vec[idx] = cont_vals[i]
 
-    # 固定温度压力
+    # 填充固定温度压力
     idx_p = feature_columns.index('Pressure_MPa')
     idx_t = feature_columns.index('Temperature_K')
     x_vec[idx_p] = P_target
     x_vec[idx_t] = T_target
 
-    # 填充分类变量
+    # 填充分类变量（独热编码）
     for j, (var, cats) in enumerate(cat_vars.items()):
         cat_name = cats[cat_indices[j]]
         onehot_col = f"{var}_{cat_name}"
@@ -130,10 +125,11 @@ def objective_func(x, T_target, P_target, Q_target, mode, data_info, model, scal
             idx = feature_columns.index(onehot_col)
             x_vec[idx] = 1.0
 
+    # 标准化并预测
     x_scaled = scaler.transform(x_vec.reshape(1, -1))
     pred = model.predict(x_scaled)[0]
 
-    penalty = constraint_penalty(cont_vals, data_info)
+    penalty = constraint_penalty(cont_vals)
 
     if mode == 'target':
         return abs(pred - Q_target) + penalty
@@ -145,7 +141,11 @@ st.sidebar.header("环境条件设置")
 T_target = st.sidebar.number_input("温度 (K)", value=298.0, step=1.0)
 P_target = st.sidebar.number_input("压力 (MPa)", value=1.0, step=0.1)
 
-mode = st.sidebar.radio("优化模式", ("target", "max"), format_func=lambda x: "目标吸附容量" if x=="target" else "最大化吸附容量")
+mode = st.sidebar.radio(
+    "优化模式",
+    ("target", "max"),
+    format_func=lambda x: "目标吸附容量" if x == "target" else "最大化吸附容量"
+)
 if mode == "target":
     Q_target = st.sidebar.number_input("目标吸附容量 (mmol/g)", value=3.5, step=0.1)
 else:
@@ -157,23 +157,24 @@ run_opt = st.sidebar.button("开始优化")
 # ========== 运行优化 ==========
 if run_opt:
     with st.spinner("正在运行遗传算法优化，请稍候..."):
-        # 提取优化所需参数
         n_cont = len(data_info['numeric_cols'])
         n_cat = len(data_info['cat_vars'])
         n_dim = n_cont + n_cat
 
-        lb = [data_info['numeric_bounds'][col][0] for col in data_info['numeric_cols']] + [0]*n_cat
-        ub = [data_info['numeric_bounds'][col][1] for col in data_info['numeric_cols']] + [len(data_info['cat_vars'][var])-0.5 for var in data_info['cat_vars']]
+        # 变量边界
+        lb = [data_info['numeric_bounds'][col][0] for col in data_info['numeric_cols']] + [0] * n_cat
+        ub = [data_info['numeric_bounds'][col][1] for col in data_info['numeric_cols']] + [len(data_info['cat_vars'][var]) - 0.5 for var in data_info['cat_vars']]
 
         # 创建遗传算法对象
-        ga = GA(func=lambda x: objective_func(x, T_target, P_target, Q_target if mode=='target' else None, mode,
-                                                data_info, model, data_info['scaler']),
-                n_dim=n_dim,
-                size_pop=100,
-                max_iter=200,
-                lb=lb,
-                ub=ub,
-                precision=1e-7)
+        ga = GA(
+            func=lambda x: objective_func(x, T_target, P_target, Q_target, mode),
+            n_dim=n_dim,
+            size_pop=100,
+            max_iter=200,
+            lb=lb,
+            ub=ub,
+            precision=1e-7
+        )
 
         best_x, best_y = ga.run()
 
@@ -200,7 +201,7 @@ if run_opt:
             for j, (var, cats) in enumerate(data_info['cat_vars'].items()):
                 result[var] = cats[cat_indices[j]]
 
-            # 验证真实预测值（不含惩罚）
+            # 验证预测值（不含惩罚）
             x_vec = np.zeros(len(data_info['all_cols']))
             for i, col in enumerate(data_info['numeric_cols']):
                 idx = data_info['all_cols'].index(col)
@@ -215,15 +216,15 @@ if run_opt:
                 if onehot_col in data_info['all_cols']:
                     idx = data_info['all_cols'].index(onehot_col)
                     x_vec[idx] = 1.0
-            x_scaled = data_info['scaler'].transform(x_vec.reshape(1, -1))
+            x_scaled = scaler.transform(x_vec.reshape(1, -1))
             pred = model.predict(x_scaled)[0]
 
             candidates.append((result, pred, y))
 
-        # 存储到会话状态以便展示
+        # 保存到 session state
         st.session_state['candidates'] = candidates
         st.session_state['mode'] = mode
-        st.session_state['Q_target'] = Q_target if mode=='target' else None
+        st.session_state['Q_target'] = Q_target if mode == 'target' else None
 
 # ========== 显示结果 ==========
 if 'candidates' in st.session_state:
@@ -234,13 +235,17 @@ if 'candidates' in st.session_state:
     st.header("优化结果")
     st.subheader(f"前 {len(candidates)} 组最优候选解")
 
-    # 将候选解转为 DataFrame 用于表格和绘图
+    # 转换为 DataFrame
     df_candidates = pd.DataFrame([r[0] for r in candidates])
     df_candidates['Predicted_Adsorption'] = [r[1] for r in candidates]
     df_candidates['Objective'] = [r[2] for r in candidates]
 
     # 显示表格
-    st.dataframe(df_candidates.style.format({col: "{:.4f}" for col in data_info['numeric_cols'] + ['Predicted_Adsorption', 'Objective']}))
+    st.dataframe(
+        df_candidates.style.format(
+            {col: "{:.4f}" for col in data_info['numeric_cols'] + ['Predicted_Adsorption', 'Objective']}
+        )
+    )
 
     # 下载按钮
     csv = df_candidates.to_csv(index=False).encode('utf-8')
@@ -258,23 +263,32 @@ if 'candidates' in st.session_state:
     plt.rcParams['figure.dpi'] = 150
 
     # 1. 平行坐标图
-    fig1 = plt.figure(figsize=(10, 5))
+    fig1, ax1 = plt.subplots(figsize=(10, 5))
     parallel_vars = data_info['numeric_cols'] + ['Predicted_Adsorption']
-    pd.plotting.parallel_coordinates(df_candidates[parallel_vars], 'Predicted_Adsorption',
-                                      colormap='viridis', linewidth=2, alpha=0.8)
-    plt.title('Parallel Coordinates of Top Candidates')
-    plt.xlabel('Variables')
-    plt.ylabel('Normalized Value')
-    plt.xticks(rotation=45)
-    plt.legend(title='Predicted (mmol/g)', bbox_to_anchor=(1.05, 1), loc='upper left')
+    pd.plotting.parallel_coordinates(
+        df_candidates[parallel_vars],
+        'Predicted_Adsorption',
+        colormap='viridis',
+        linewidth=2,
+        alpha=0.8
+    )
+    ax1.set_title('Parallel Coordinates of Top Candidates')
+    ax1.set_xlabel('Variables')
+    ax1.set_ylabel('Normalized Value')
+    ax1.tick_params(axis='x', rotation=45)
+    ax1.legend(title='Predicted (mmol/g)', bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     st.pyplot(fig1)
 
     # 2. 散点图矩阵
     fig2 = plt.figure(figsize=(10, 8))
-    g = sns.pairplot(df_candidates, vars=data_info['numeric_cols']+['Predicted_Adsorption'],
-                     diag_kind='hist', plot_kws={'alpha':0.8, 's':60},
-                     diag_kws={'alpha':0.7, 'bins':10})
+    g = sns.pairplot(
+        df_candidates,
+        vars=data_info['numeric_cols'] + ['Predicted_Adsorption'],
+        diag_kind='hist',
+        plot_kws={'alpha': 0.8, 's': 60},
+        diag_kws={'alpha': 0.7, 'bins': 10}
+    )
     g.fig.suptitle('Scatter Matrix of Continuous Variables', y=1.02, fontsize=16)
     st.pyplot(g.fig)
 
@@ -291,36 +305,59 @@ if 'candidates' in st.session_state:
         ax.set_ylabel('Count')
         ax.tick_params(axis='x', rotation=45)
         for bar, count in zip(bars, counts.values):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.05,
-                    str(count), ha='center', va='bottom', fontsize=10)
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.05,
+                str(count),
+                ha='center',
+                va='bottom',
+                fontsize=10
+            )
+    # 隐藏多余的子图
     for j in range(len(cat_vars_names), len(axes)):
         axes[j].axis('off')
     plt.tight_layout()
     st.pyplot(fig3)
 
-    # 4. 预测值与目标对比（如果模式是target）
+    # 4. 预测值与目标对比
     if mode == 'target':
-        fig4, ax = plt.subplots(figsize=(6, 5))
-        ax.scatter([Q_target]*len(df_candidates), df_candidates['Predicted_Adsorption'],
-                   s=120, c='red', alpha=0.7, edgecolor='black', zorder=5)
-        ax.plot([Q_target-0.2, Q_target+0.2], [Q_target-0.2, Q_target+0.2],
-                'k--', linewidth=2, label='Perfect match')
-        ax.set_xlabel('Target Adsorption (mmol/g)')
-        ax.set_ylabel('Predicted Adsorption (mmol/g)')
-        ax.set_title('Predicted vs Target')
-        ax.grid(True, alpha=0.3)
-        ax.legend()
+        fig4, ax4 = plt.subplots(figsize=(6, 5))
+        ax4.scatter(
+            [Q_target] * len(df_candidates),
+            df_candidates['Predicted_Adsorption'],
+            s=120,
+            c='red',
+            alpha=0.7,
+            edgecolor='black',
+            zorder=5
+        )
+        ax4.plot(
+            [Q_target - 0.2, Q_target + 0.2],
+            [Q_target - 0.2, Q_target + 0.2],
+            'k--',
+            linewidth=2,
+            label='Perfect match'
+        )
+        ax4.set_xlabel('Target Adsorption (mmol/g)')
+        ax4.set_ylabel('Predicted Adsorption (mmol/g)')
+        ax4.set_title('Predicted vs Target')
+        ax4.grid(True, alpha=0.3)
+        ax4.legend()
         plt.tight_layout()
         st.pyplot(fig4)
     else:
-        fig4, ax = plt.subplots(figsize=(6, 5))
-        ax.bar(range(1, len(df_candidates)+1), df_candidates['Predicted_Adsorption'],
-               color='steelblue', edgecolor='black')
-        ax.set_xlabel('Candidate Rank')
-        ax.set_ylabel('Predicted Adsorption (mmol/g)')
-        ax.set_title('Top Candidates - Predicted Adsorption')
-        ax.set_xticks(range(1, len(df_candidates)+1))
-        ax.grid(True, alpha=0.3, axis='y')
+        fig4, ax4 = plt.subplots(figsize=(6, 5))
+        ax4.bar(
+            range(1, len(df_candidates) + 1),
+            df_candidates['Predicted_Adsorption'],
+            color='steelblue',
+            edgecolor='black'
+        )
+        ax4.set_xlabel('Candidate Rank')
+        ax4.set_ylabel('Predicted Adsorption (mmol/g)')
+        ax4.set_title('Top Candidates - Predicted Adsorption')
+        ax4.set_xticks(range(1, len(df_candidates) + 1))
+        ax4.grid(True, alpha=0.3, axis='y')
         plt.tight_layout()
         st.pyplot(fig4)
 
