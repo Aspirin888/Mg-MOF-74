@@ -3,86 +3,44 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-import xgboost as xgb
 from sko.GA import GA
 import joblib
+from catboost import CatBoostRegressor  # 导入 CatBoost
 import warnings
 warnings.filterwarnings('ignore')
 
 # 设置页面
-st.set_page_config(page_title="Mg-MOF-74 吸附剂逆向设计 (XGBoost)", layout="wide")
-st.title("Mg-MOF-74 吸附剂逆向设计平台 (XGBoost)")
-st.markdown("基于 XGBoost 模型，通过遗传算法逆向搜索满足目标吸附容量和环境条件的材料参数。")
+st.set_page_config(page_title="Mg-MOF-74 吸附剂逆向设计", layout="wide")
+st.title("Mg-MOF-74 吸附剂逆向设计平台")
+st.markdown("基于已训练的 CatBoost 模型，通过遗传算法逆向搜索满足目标吸附容量和环境条件的材料参数。")
 
-# ========== 加载数据并提取特征信息 ==========
-@st.cache_data
-def load_data_and_features():
-    df = pd.read_csv('Mg_MOF_74_独热编码.csv')
-    X = df.drop('Adsorption_capacity_mmol_g', axis=1)
-    y = df['Adsorption_capacity_mmol_g']
-    
-    # 划分训练集和测试集（仅用于获取统计信息）
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    # 数值列和分类列定义（根据您的数据集）
-    numeric_cols = ['Molar ratio', 'SBET_m2_g', 'Vpore_cm3_g']
-    fixed_cols = ['Pressure_MPa', 'Temperature_K']
-    cat_vars_names = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
-    
-    all_cols = X.columns.tolist()
-    
-    # 解析分类变量类别
-    cat_vars = {name: [] for name in cat_vars_names}
-    for col in all_cols:
-        for var in cat_vars_names:
-            if col.startswith(var + '_'):
-                cat_name = col[len(var)+1:]
-                if cat_name not in cat_vars[var]:
-                    cat_vars[var].append(cat_name)
-                break
-    for var in cat_vars:
-        cat_vars[var].sort()
-    
-    # 单变量边界（基于训练数据，不扩展）
-    numeric_bounds = {}
-    for col in numeric_cols:
-        numeric_bounds[col] = (X_train[col].min(), X_train[col].max())
-    
-    # SBET/Vpore 比值约束
-    ratio_train = X_train['SBET_m2_g'] / (X_train['Vpore_cm3_g'] + 1e-6)
-    q_low = ratio_train.quantile(0.025)
-    q_high = ratio_train.quantile(0.975)
-    
-    return {
-        'X_train': X_train,
-        'numeric_cols': numeric_cols,
-        'fixed_cols': fixed_cols,
-        'cat_vars': cat_vars,
-        'all_cols': all_cols,
-        'numeric_bounds': numeric_bounds,
-        'ratio_bounds': (q_low, q_high),
-    }
-
-data_info = load_data_and_features()
-
-# ========== 加载模型和标准化器 ==========
+# ========== 加载模型和特征信息 ==========
 @st.cache_resource
-def load_model_and_scaler():
-    model = joblib.load('XGBoost.pkl')
+def load_model_and_info():
+    # 加载 CatBoost 模型（假设用 joblib 保存）
+    # 注意：CatBoost 原生保存格式可能不同，这里按 joblib 处理
+    model = joblib.load('CatBoost.pkl')
     scaler = joblib.load('scaler.pkl')
-    return model, scaler
+    info = joblib.load('model_info.pkl')
+    return model, scaler, info
 
-model, scaler = load_model_and_scaler()
+model, scaler, info = load_model_and_info()
+
+# 从 info 中提取变量
+numeric_cols = info['numeric_cols']
+fixed_cols = info['fixed_cols']
+cat_vars = info['cat_vars']          # 字典：分类变量名 -> 类别列表
+all_cols = info['all_cols']
+numeric_bounds = info['numeric_bounds']
+ratio_bounds = info['ratio_bounds']  # (低, 高)
 
 # ========== 定义约束和目标函数 ==========
 def constraint_penalty(x):
     """SBET/Vpore 比值约束的惩罚项"""
-    sbet = x[1]   # SBET_m2_g 是第二个连续变量
+    sbet = x[1]   # SBET_m2_g 是第二个连续变量（索引1）
     vpore = x[2]  # Vpore_cm3_g 是第三个
     ratio = sbet / (vpore + 1e-6)
-    q_low, q_high = data_info['ratio_bounds']
+    q_low, q_high = ratio_bounds
     penalty = 0.0
     if ratio < q_low:
         penalty = 1000 * (q_low - ratio)
@@ -92,28 +50,26 @@ def constraint_penalty(x):
 
 def objective_func(x, T_target, P_target, Q_target, mode):
     """遗传算法目标函数"""
-    n_cont = len(data_info['numeric_cols'])
+    n_cont = len(numeric_cols)
     cont_vals = x[:n_cont]
     cat_indices = x[n_cont:].astype(int)
 
     # 索引合法性修正
-    cat_vars = data_info['cat_vars']
     for j, (var, cats) in enumerate(cat_vars.items()):
         if cat_indices[j] < 0 or cat_indices[j] >= len(cats):
             cat_indices[j] = np.clip(cat_indices[j], 0, len(cats)-1)
 
     # 构建特征向量
-    x_vec = np.zeros(len(data_info['all_cols']))
-    feature_columns = data_info['all_cols']
+    x_vec = np.zeros(len(all_cols))
 
     # 填充连续变量
-    for i, col in enumerate(data_info['numeric_cols']):
-        idx = feature_columns.index(col)
+    for i, col in enumerate(numeric_cols):
+        idx = all_cols.index(col)
         x_vec[idx] = cont_vals[i]
 
     # 填充固定温度压力
-    idx_p = feature_columns.index('Pressure_MPa')
-    idx_t = feature_columns.index('Temperature_K')
+    idx_p = all_cols.index('Pressure_MPa')
+    idx_t = all_cols.index('Temperature_K')
     x_vec[idx_p] = P_target
     x_vec[idx_t] = T_target
 
@@ -121,8 +77,8 @@ def objective_func(x, T_target, P_target, Q_target, mode):
     for j, (var, cats) in enumerate(cat_vars.items()):
         cat_name = cats[cat_indices[j]]
         onehot_col = f"{var}_{cat_name}"
-        if onehot_col in feature_columns:
-            idx = feature_columns.index(onehot_col)
+        if onehot_col in all_cols:
+            idx = all_cols.index(onehot_col)
             x_vec[idx] = 1.0
 
     # 标准化并预测
@@ -157,13 +113,13 @@ run_opt = st.sidebar.button("开始优化")
 # ========== 运行优化 ==========
 if run_opt:
     with st.spinner("正在运行遗传算法优化，请稍候..."):
-        n_cont = len(data_info['numeric_cols'])
-        n_cat = len(data_info['cat_vars'])
+        n_cont = len(numeric_cols)
+        n_cat = len(cat_vars)
         n_dim = n_cont + n_cat
 
         # 变量边界
-        lb = [data_info['numeric_bounds'][col][0] for col in data_info['numeric_cols']] + [0] * n_cat
-        ub = [data_info['numeric_bounds'][col][1] for col in data_info['numeric_cols']] + [len(data_info['cat_vars'][var]) - 0.5 for var in data_info['cat_vars']]
+        lb = [numeric_bounds[col][0] for col in numeric_cols] + [0] * n_cat
+        ub = [numeric_bounds[col][1] for col in numeric_cols] + [len(cat_vars[var]) - 0.5 for var in cat_vars]
 
         # 创建遗传算法对象
         ga = GA(
@@ -191,37 +147,37 @@ if run_opt:
         for k, (x, y) in enumerate(zip(top_x, top_y)):
             cont_vals = x[:n_cont]
             cat_indices = x[n_cont:].astype(int)
-            for j, (var, cats) in enumerate(data_info['cat_vars'].items()):
+            for j, (var, cats) in enumerate(cat_vars.items()):
                 if cat_indices[j] >= len(cats):
                     cat_indices[j] = len(cats) - 1
 
             result = {}
-            for i, col in enumerate(data_info['numeric_cols']):
+            for i, col in enumerate(numeric_cols):
                 result[col] = cont_vals[i]
-            for j, (var, cats) in enumerate(data_info['cat_vars'].items()):
+            for j, (var, cats) in enumerate(cat_vars.items()):
                 result[var] = cats[cat_indices[j]]
 
             # 验证预测值（不含惩罚）
-            x_vec = np.zeros(len(data_info['all_cols']))
-            for i, col in enumerate(data_info['numeric_cols']):
-                idx = data_info['all_cols'].index(col)
+            x_vec = np.zeros(len(all_cols))
+            for i, col in enumerate(numeric_cols):
+                idx = all_cols.index(col)
                 x_vec[idx] = cont_vals[i]
-            idx_p = data_info['all_cols'].index('Pressure_MPa')
-            idx_t = data_info['all_cols'].index('Temperature_K')
+            idx_p = all_cols.index('Pressure_MPa')
+            idx_t = all_cols.index('Temperature_K')
             x_vec[idx_p] = P_target
             x_vec[idx_t] = T_target
-            for j, (var, cats) in enumerate(data_info['cat_vars'].items()):
+            for j, (var, cats) in enumerate(cat_vars.items()):
                 cat_name = cats[cat_indices[j]]
                 onehot_col = f"{var}_{cat_name}"
-                if onehot_col in data_info['all_cols']:
-                    idx = data_info['all_cols'].index(onehot_col)
+                if onehot_col in all_cols:
+                    idx = all_cols.index(onehot_col)
                     x_vec[idx] = 1.0
             x_scaled = scaler.transform(x_vec.reshape(1, -1))
             pred = model.predict(x_scaled)[0]
 
             candidates.append((result, pred, y))
 
-        # 保存到 session state
+        # 保存到 session state 以便展示
         st.session_state['candidates'] = candidates
         st.session_state['mode'] = mode
         st.session_state['Q_target'] = Q_target if mode == 'target' else None
@@ -243,7 +199,7 @@ if 'candidates' in st.session_state:
     # 显示表格
     st.dataframe(
         df_candidates.style.format(
-            {col: "{:.4f}" for col in data_info['numeric_cols'] + ['Predicted_Adsorption', 'Objective']}
+            {col: "{:.4f}" for col in numeric_cols + ['Predicted_Adsorption', 'Objective']}
         )
     )
 
@@ -264,7 +220,7 @@ if 'candidates' in st.session_state:
 
     # 1. 平行坐标图
     fig1, ax1 = plt.subplots(figsize=(10, 5))
-    parallel_vars = data_info['numeric_cols'] + ['Predicted_Adsorption']
+    parallel_vars = numeric_cols + ['Predicted_Adsorption']
     pd.plotting.parallel_coordinates(
         df_candidates[parallel_vars],
         'Predicted_Adsorption',
@@ -284,7 +240,7 @@ if 'candidates' in st.session_state:
     fig2 = plt.figure(figsize=(10, 8))
     g = sns.pairplot(
         df_candidates,
-        vars=data_info['numeric_cols'] + ['Predicted_Adsorption'],
+        vars=numeric_cols + ['Predicted_Adsorption'],
         diag_kind='hist',
         plot_kws={'alpha': 0.8, 's': 60},
         diag_kws={'alpha': 0.7, 'bins': 10}
@@ -293,7 +249,7 @@ if 'candidates' in st.session_state:
     st.pyplot(g.fig)
 
     # 3. 分类变量分布
-    cat_vars_names = list(data_info['cat_vars'].keys())
+    cat_vars_names = list(cat_vars.keys())
     fig3, axes = plt.subplots(2, 2, figsize=(12, 8))
     axes = axes.flatten()
     for idx, var in enumerate(cat_vars_names):
@@ -313,7 +269,7 @@ if 'candidates' in st.session_state:
                 va='bottom',
                 fontsize=10
             )
-    # 隐藏多余的子图
+    # 隐藏多余的子图（如果分类变量少于4）
     for j in range(len(cat_vars_names), len(axes)):
         axes[j].axis('off')
     plt.tight_layout()
