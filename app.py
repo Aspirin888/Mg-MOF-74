@@ -3,36 +3,85 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from catboost import CatBoostRegressor
 from sko.GA import GA
 import joblib
-from catboost import CatBoostRegressor  # 导入 CatBoost
 import warnings
 warnings.filterwarnings('ignore')
 
 # 设置页面
 st.set_page_config(page_title="Mg-MOF-74 吸附剂逆向设计", layout="wide")
 st.title("Mg-MOF-74 吸附剂逆向设计平台")
-st.markdown("基于已训练的 CatBoost 模型，通过遗传算法逆向搜索满足目标吸附容量和环境条件的材料参数。")
+st.markdown("基于 CatBoost 模型，通过遗传算法逆向搜索满足目标吸附容量和环境条件的材料参数。")
 
-# ========== 加载模型和特征信息 ==========
+# ========== 加载模型和标准化器 ==========
 @st.cache_resource
-def load_model_and_info():
-    # 加载 CatBoost 模型（假设用 joblib 保存）
-    # 注意：CatBoost 原生保存格式可能不同，这里按 joblib 处理
+def load_model():
     model = joblib.load('CatBoost.pkl')
     scaler = joblib.load('scaler.pkl')
-    info = joblib.load('model_info.pkl')
-    return model, scaler, info
+    return model, scaler
 
-model, scaler, info = load_model_and_info()
+model, scaler = load_model()
 
-# 从 info 中提取变量
+# ========== 从数据集提取特征信息（缓存） ==========
+@st.cache_data
+def load_feature_info():
+    df = pd.read_csv('Mg_MOF_74_独热编码.csv')
+    X = df.drop('Adsorption_capacity_mmol_g', axis=1)
+    y = df['Adsorption_capacity_mmol_g']
+    
+    # 划分训练集（仅用于计算边界，与训练时保持一致）
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # 特征列
+    numeric_cols = ['Molar ratio', 'SBET_m2_g', 'Vpore_cm3_g']
+    fixed_cols = ['Pressure_MPa', 'Temperature_K']
+    cat_vars_names = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
+    
+    all_cols = X.columns.tolist()
+    
+    # 解析分类变量类别
+    cat_vars = {name: [] for name in cat_vars_names}
+    for col in all_cols:
+        for var in cat_vars_names:
+            if col.startswith(var + '_'):
+                cat_name = col[len(var)+1:]
+                if cat_name not in cat_vars[var]:
+                    cat_vars[var].append(cat_name)
+                break
+    for var in cat_vars:
+        cat_vars[var].sort()
+    
+    # 单变量边界（基于训练数据，确保不超出模型可靠域）
+    numeric_bounds = {}
+    for col in numeric_cols:
+        numeric_bounds[col] = (X_train[col].min(), X_train[col].max())
+    
+    # SBET/Vpore 比值约束（基于训练数据）
+    ratio_train = X_train['SBET_m2_g'] / (X_train['Vpore_cm3_g'] + 1e-6)
+    q_low = ratio_train.quantile(0.025)
+    q_high = ratio_train.quantile(0.975)
+    
+    return {
+        'numeric_cols': numeric_cols,
+        'fixed_cols': fixed_cols,
+        'cat_vars': cat_vars,
+        'all_cols': all_cols,
+        'numeric_bounds': numeric_bounds,
+        'ratio_bounds': (q_low, q_high),
+        'X_train': X_train,
+        'y_train': y_train
+    }
+
+info = load_feature_info()
 numeric_cols = info['numeric_cols']
 fixed_cols = info['fixed_cols']
-cat_vars = info['cat_vars']          # 字典：分类变量名 -> 类别列表
+cat_vars = info['cat_vars']
 all_cols = info['all_cols']
 numeric_bounds = info['numeric_bounds']
-ratio_bounds = info['ratio_bounds']  # (低, 高)
+ratio_bounds = info['ratio_bounds']
 
 # ========== 定义约束和目标函数 ==========
 def constraint_penalty(x):
@@ -177,7 +226,7 @@ if run_opt:
 
             candidates.append((result, pred, y))
 
-        # 保存到 session state 以便展示
+        # 保存到 session state
         st.session_state['candidates'] = candidates
         st.session_state['mode'] = mode
         st.session_state['Q_target'] = Q_target if mode == 'target' else None
@@ -191,25 +240,20 @@ if 'candidates' in st.session_state:
     st.header("优化结果")
     st.subheader(f"前 {len(candidates)} 组最优候选解")
 
-    # 转换为 DataFrame
     df_candidates = pd.DataFrame([r[0] for r in candidates])
     df_candidates['Predicted_Adsorption'] = [r[1] for r in candidates]
     df_candidates['Objective'] = [r[2] for r in candidates]
 
-    # 显示表格
     st.dataframe(
         df_candidates.style.format(
             {col: "{:.4f}" for col in numeric_cols + ['Predicted_Adsorption', 'Objective']}
         )
     )
 
-    # 下载按钮
     csv = df_candidates.to_csv(index=False).encode('utf-8')
     st.download_button("下载候选结果为CSV", data=csv, file_name="candidates.csv", mime="text/csv")
 
-    # ========== 可视化 ==========
-    st.subheader("可视化分析")
-
+    # 可视化部分（与之前相同，略）
     # 设置学术绘图风格
     plt.style.use('seaborn-v0_8-darkgrid')
     plt.rcParams['font.family'] = 'serif'
@@ -269,7 +313,6 @@ if 'candidates' in st.session_state:
                 va='bottom',
                 fontsize=10
             )
-    # 隐藏多余的子图（如果分类变量少于4）
     for j in range(len(cat_vars_names), len(axes)):
         axes[j].axis('off')
     plt.tight_layout()
