@@ -6,3 +6,4 @@ seaborn>=0.12.0
 scikit-learn>=1.2.0
 scikit-opt>=0.7.0
 joblib>=1.2.0
+xgboost>=1.7.0
