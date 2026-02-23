@@ -18,20 +18,6 @@ st.set_page_config(page_title="Mg-MOF-74 Inverse Design Platform", layout="wide"
 st.title("Mg-MOF-74 Adsorbent Inverse Design Platform")
 st.markdown("Based on CatBoost model and genetic algorithm to search for optimal synthesis and structural parameters for CO₂ capture.")
 
-# ========== 设置图表字体（Arial） ==========
-plt.rcParams['font.family'] = 'Arial'
-plt.rcParams['font.size'] = 12
-plt.rcParams['axes.linewidth'] = 1
-plt.rcParams['axes.edgecolor'] = 'black'
-plt.rcParams['axes.facecolor'] = 'white'
-plt.rcParams['figure.facecolor'] = 'white'
-plt.rcParams['figure.dpi'] = 150
-plt.rcParams['savefig.dpi'] = 300
-plt.rcParams['savefig.bbox'] = 'tight'
-plt.rcParams['font.weight'] = 'bold'
-plt.rcParams['axes.labelweight'] = 'bold'
-plt.rcParams['axes.titleweight'] = 'bold'
-
 # ========== 英文标签映射 ==========
 plot_label_mapping = {
     'Molar ratio': 'Mg/ligand ratio',
@@ -174,6 +160,7 @@ def objective_func(x, T_target, P_target, Q_target, mode):
         return -pred + penalty
 
 # ========== 侧边栏输入 ==========
+
 st.sidebar.header("Environment Conditions")
 
 # 温度：范围 [273.0, 333.0]，默认 298.0
@@ -351,9 +338,9 @@ if 'candidates' in st.session_state:
     # 创建图形
     fig = plt.figure(figsize=(20, 11))
     gs = gridspec.GridSpec(2, 3, figure=fig,
-                           width_ratios=[1.25, 1.25, 0.9],
-                           wspace=0.35, hspace=0.4,
-                           left=0.12, right=0.94, bottom=0.2, top=0.93)
+                           width_ratios=[1.25, 1.3, 0.9],
+                           wspace=0.45, hspace=0.5,
+                           left=0.12, right=0.94, bottom=0.1, top=0.90)
 
     ax_a = fig.add_subplot(gs[0, 0])  # (a) 结构平行坐标
     ax_b = fig.add_subplot(gs[0, 1])  # (b) 结构-性能散点
@@ -458,4 +445,3 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
-
