@@ -377,7 +377,7 @@ if 'candidates' in st.session_state:
     cbar = plt.colorbar(sc, ax=ax_b, fraction=0.046, pad=0.04)
     cbar.set_label(r'CO$_2$ uptake (mmol/g)', fontweight='bold', fontsize=11)
     cbar.ax.yaxis.label.set_weight('bold')
-    cbar.ax.tick_params(labelsize=11)
+    cbar.ax.tick_params(labelsize=9)
     ax_b.tick_params(labelsize=11)
 
     # ----- (c) 形貌分布 -----
@@ -402,7 +402,7 @@ if 'candidates' in st.session_state:
     ax_d.set_ylabel(plot_label_mapping['Molar ratio'], fontweight='bold', fontsize=12)
     ax_d.set_title('(d) Molar ratio vs candidate', fontweight='bold', fontsize=14)
     ax_d.set_xticks(range(1, len(df_candidates)+1))
-    ax_d.tick_params(labelsize=9)
+    ax_d.tick_params(labelsize=11)
     cbar_d = plt.colorbar(sc_d, ax=ax_d, fraction=0.046, pad=0.04)
     cbar_d.set_label(r'CO$_2$ uptake (mmol/g)', fontweight='bold', fontsize=9)
 
@@ -445,5 +445,6 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
