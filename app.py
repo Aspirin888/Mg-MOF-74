@@ -18,6 +18,20 @@ st.set_page_config(page_title="Mg-MOF-74 Inverse Design Platform", layout="wide"
 st.title("Mg-MOF-74 Adsorbent Inverse Design Platform")
 st.markdown("Based on CatBoost model and genetic algorithm to search for optimal synthesis and structural parameters for CO₂ capture.")
 
+# ========== 设置图表字体（Arial） ==========
+plt.rcParams['font.family'] = 'Arial'
+plt.rcParams['font.size'] = 12
+plt.rcParams['axes.linewidth'] = 1
+plt.rcParams['axes.edgecolor'] = 'black'
+plt.rcParams['axes.facecolor'] = 'white'
+plt.rcParams['figure.facecolor'] = 'white'
+plt.rcParams['figure.dpi'] = 150
+plt.rcParams['savefig.dpi'] = 300
+plt.rcParams['savefig.bbox'] = 'tight'
+plt.rcParams['font.weight'] = 'bold'
+plt.rcParams['axes.labelweight'] = 'bold'
+plt.rcParams['axes.titleweight'] = 'bold'
+
 # ========== 英文标签映射 ==========
 plot_label_mapping = {
     'Molar ratio': 'Mg/ligand ratio',
@@ -161,8 +175,25 @@ def objective_func(x, T_target, P_target, Q_target, mode):
 
 # ========== 侧边栏输入 ==========
 st.sidebar.header("Environment Conditions")
-T_target = st.sidebar.number_input("Temperature (K)", value=298.0, step=1.0)
-P_target = st.sidebar.number_input("Pressure (MPa)", value=1.0, step=0.1)
+
+# 温度：范围 [273.0, 333.0]，默认 298.0
+T_target = st.sidebar.number_input(
+    "Temperature (K)",
+    value=298.0,
+    min_value=273.0,
+    max_value=333.0,
+    step=1.0
+)
+
+# 压力：范围 [0.0001, 2.9491]，默认 0.1 (常压)
+P_target = st.sidebar.number_input(
+    "Pressure (MPa)",
+    value=0.1,
+    min_value=0.0001,
+    max_value=2.9491,
+    step=0.1,
+    format="%.4f"
+)
 
 mode = st.sidebar.radio(
     "Optimization Mode",
@@ -320,9 +351,9 @@ if 'candidates' in st.session_state:
     # 创建图形
     fig = plt.figure(figsize=(20, 11))
     gs = gridspec.GridSpec(2, 3, figure=fig,
-                           width_ratios=[1.25, 1.2, 0.9],
-                           wspace=0.45, hspace=0.5,
-                           left=0.12, right=0.94, bottom=0.13, top=0.93)
+                           width_ratios=[1.25, 1.25, 0.9],
+                           wspace=0.35, hspace=0.4,
+                           left=0.12, right=0.94, bottom=0.1, top=0.93)
 
     ax_a = fig.add_subplot(gs[0, 0])  # (a) 结构平行坐标
     ax_b = fig.add_subplot(gs[0, 1])  # (b) 结构-性能散点
@@ -427,6 +458,3 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
-
-
-
