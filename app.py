@@ -338,8 +338,8 @@ if 'candidates' in st.session_state:
     # 创建图形
     fig = plt.figure(figsize=(20, 11))
     gs = gridspec.GridSpec(2, 3, figure=fig,
-                           width_ratios=[1.25, 1.35, 0.9],
-                           wspace=0.45, hspace=0.5,
+                           width_ratios=[1.25, 1.2, 0.9],
+                           wspace=0.5, hspace=0.5,
                            left=0.12, right=0.94, bottom=0.1, top=0.92)
 
     ax_a = fig.add_subplot(gs[0, 0])  # (a) 结构平行坐标
@@ -398,13 +398,13 @@ if 'candidates' in st.session_state:
                         s=120, edgecolor='k', linewidth=0.8,
                         vmin=df_candidates['Predicted_Adsorption'].min(),
                         vmax=df_candidates['Predicted_Adsorption'].max())
-    ax_d.set_xlabel('Candidate', fontweight='bold', fontsize=11)
+    ax_d.set_xlabel('Candidate', fontweight='bold', fontsize=12)
     ax_d.set_ylabel(plot_label_mapping['Molar ratio'], fontweight='bold', fontsize=12)
     ax_d.set_title('(d) Molar ratio vs candidate', fontweight='bold', fontsize=14)
     ax_d.set_xticks(range(1, len(df_candidates)+1))
-    ax_d.tick_params(labelsize=10)
+    ax_d.tick_params(labelsize=9)
     cbar_d = plt.colorbar(sc_d, ax=ax_d, fraction=0.046, pad=0.04)
-    cbar_d.set_label(r'CO$_2$ uptake (mmol/g)', fontweight='bold', fontsize=11)
+    cbar_d.set_label(r'CO$_2$ uptake (mmol/g)', fontweight='bold', fontsize=9)
 
     # ----- (e) 合成分类变量分布（合并）-----
     syn_cat_vars = ['Mg_source', 'Solvent', 'Treatment']
@@ -445,4 +445,5 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
