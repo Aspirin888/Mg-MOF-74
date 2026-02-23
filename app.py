@@ -389,9 +389,12 @@ if 'candidates' in st.session_state:
     for bar, count in zip(bars_c, morph_counts.values):
         ax_c.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height()/2, str(count),
                   va='center', ha='left', fontsize=10, fontweight='bold')
+    # 调整x轴范围，防止标签溢出
+    max_width_c = max(bar.get_width() for bar in bars_c)
+    ax_c.set_xlim(right=max_width_c * 1.15)  # 预留15%空间给标签
     ax_c.tick_params(axis='x', labelsize=11)
     ax_c.tick_params(axis='y', labelsize=11)
-
+    
     # ----- (d) 摩尔比与预测值散点图 -----
     sc_d = ax_d.scatter(range(1, len(df_candidates)+1), df_candidates['Molar ratio'],
                         c=df_candidates['Predicted_Adsorption'], cmap='viridis',
@@ -405,7 +408,8 @@ if 'candidates' in st.session_state:
     ax_d.tick_params(labelsize=11)
     cbar_d = plt.colorbar(sc_d, ax=ax_d, fraction=0.046, pad=0.04)
     cbar_d.set_label(r'CO$_2$ uptake (mmol/g)', fontweight='bold', fontsize=9)
-    cbar.ax.tick_params(labelsize=9)
+    cbar_d.ax.tick_params(labelsize=9)   # 修正：将刻度标签字号设为9
+    
     # ----- (e) 合成分类变量分布（合并）-----
     syn_cat_vars = ['Mg_source', 'Solvent', 'Treatment']
     all_cats = []
@@ -419,7 +423,7 @@ if 'candidates' in st.session_state:
             all_cats.append(readable)
             all_counts.append(cnt)
             all_colors.append(colors[vi % len(colors)])
-
+    
     bars_e = ax_e.barh(range(len(all_cats)), all_counts, color=all_colors, edgecolor='black')
     ax_e.set_yticks(range(len(all_cats)))
     ax_e.set_yticklabels(all_cats, fontweight='bold', fontsize=11)
@@ -428,6 +432,9 @@ if 'candidates' in st.session_state:
     for bar, cnt in zip(bars_e, all_counts):
         ax_e.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height()/2, str(cnt),
                   va='center', ha='left', fontsize=10, fontweight='bold')
+    # 调整x轴范围，防止标签溢出
+    max_width_e = max(bar.get_width() for bar in bars_e)
+    ax_e.set_xlim(right=max_width_e * 1.15)  # 预留15%空间
     ax_e.tick_params(axis='x', labelsize=11)
 
     # ----- (f) 预测值排序条形图 -----
@@ -445,6 +452,7 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
 
