@@ -320,7 +320,7 @@ if 'candidates' in st.session_state:
     # 创建图形
     fig = plt.figure(figsize=(20, 11))
     gs = gridspec.GridSpec(2, 3, figure=fig,
-                           width_ratios=[1.25, 1.3, 0.8],
+                           width_ratios=[1.25, 1.2, 0.9],
                            wspace=0.45, hspace=0.5,
                            left=0.12, right=0.94, bottom=0.13, top=0.93)
 
@@ -427,5 +427,6 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
