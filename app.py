@@ -338,7 +338,7 @@ if 'candidates' in st.session_state:
     # 创建图形
     fig = plt.figure(figsize=(20, 11))
     gs = gridspec.GridSpec(2, 3, figure=fig,
-                           width_ratios=[1.25, 1.2, 0.9],
+                           width_ratios=[1.25, 1.2, 1],
                            wspace=0.5, hspace=0.5,
                            left=0.12, right=0.94, bottom=0.1, top=0.92)
 
@@ -388,7 +388,7 @@ if 'candidates' in st.session_state:
     ax_c.set_title('(c) Morphology distribution', fontweight='bold', fontsize=14)
     for bar, count in zip(bars_c, morph_counts.values):
         ax_c.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height()/2, str(count),
-                  va='center', ha='left', fontsize=12, fontweight='bold')
+                  va='center', ha='left', fontsize=10, fontweight='bold')
     ax_c.tick_params(axis='x', labelsize=11)
     ax_c.tick_params(axis='y', labelsize=11)
 
@@ -405,7 +405,7 @@ if 'candidates' in st.session_state:
     ax_d.tick_params(labelsize=11)
     cbar_d = plt.colorbar(sc_d, ax=ax_d, fraction=0.046, pad=0.04)
     cbar_d.set_label(r'CO$_2$ uptake (mmol/g)', fontweight='bold', fontsize=9)
-
+    cbar.ax.tick_params(labelsize=9)
     # ----- (e) 合成分类变量分布（合并）-----
     syn_cat_vars = ['Mg_source', 'Solvent', 'Treatment']
     all_cats = []
@@ -427,8 +427,8 @@ if 'candidates' in st.session_state:
     ax_e.set_title('(e) Synthesis categorical variables', fontweight='bold', fontsize=14)
     for bar, cnt in zip(bars_e, all_counts):
         ax_e.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height()/2, str(cnt),
-                  va='center', ha='left', fontsize=12, fontweight='bold')
-    ax_e.tick_params(axis='x', labelsize=9)
+                  va='center', ha='left', fontsize=10, fontweight='bold')
+    ax_e.tick_params(axis='x', labelsize=11)
 
     # ----- (f) 预测值排序条形图 -----
     x_pos = np.arange(1, len(df_candidates)+1)
@@ -445,6 +445,7 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
 
