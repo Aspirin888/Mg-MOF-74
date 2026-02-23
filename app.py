@@ -353,7 +353,7 @@ if 'candidates' in st.session_state:
     gs = gridspec.GridSpec(2, 3, figure=fig,
                            width_ratios=[1.25, 1.25, 0.9],
                            wspace=0.35, hspace=0.4,
-                           left=0.12, right=0.94, bottom=0.1, top=0.93)
+                           left=0.12, right=0.94, bottom=0.2, top=0.93)
 
     ax_a = fig.add_subplot(gs[0, 0])  # (a) 结构平行坐标
     ax_b = fig.add_subplot(gs[0, 1])  # (b) 结构-性能散点
@@ -458,3 +458,4 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
