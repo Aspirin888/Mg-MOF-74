@@ -336,16 +336,17 @@ if 'candidates' in st.session_state:
     df_candidates = pd.DataFrame([r[0] for r in candidates])
     df_candidates['Predicted_Adsorption'] = [r[1] for r in candidates]
     df_candidates['Objective'] = [r[2] for r in candidates]
-        # 创建显示用副本，将分类变量映射为可读名称
+
+    # 创建显示用副本，将分类变量映射为可读名称，同时将列名映射为可读标签（用于表格显示）
     df_display = df_candidates.copy()
     cat_cols = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
     for col in cat_cols:
         df_display[col] = df_display[col].apply(lambda x: plot_label_mapping.get(f'{col}_{x}', x))
-    
-    # 将列名映射为可读名称（如果存在于 plot_label_mapping 中）
-    rename_dict = {col: plot_label_mapping.get(col, col) for col in df_display.columns}
-    df_display = df_display.rename(columns=rename_dict)
-    
+
+    # 将列名映射为可读名称（用于表格显示）
+    rename_dict_display = {col: plot_label_mapping.get(col, col) for col in df_display.columns}
+    df_display = df_display.rename(columns=rename_dict_display)
+
     # 显示表格
     st.dataframe(
         df_display.style.format(
@@ -353,7 +354,15 @@ if 'candidates' in st.session_state:
         )
     )
 
-    csv = df_candidates.to_csv(index=False).encode('utf-8')
+    # ---------- CSV 下载（列名处理）----------
+    df_csv = df_candidates.copy()
+    # 映射分类变量值
+    for col in cat_cols:
+        df_csv[col] = df_csv[col].apply(lambda x: plot_label_mapping.get(f'{col}_{x}', x))
+    # 按要求将 Treatment 列名改为 Modification
+    df_csv = df_csv.rename(columns={'Treatment': 'Modification'})
+    # 其他列保持原始列名（如 Molar ratio, SBET_m2_g 等），无需额外处理
+    csv = df_csv.to_csv(index=False).encode('utf-8')
     st.download_button("Download candidates as CSV", data=csv, file_name="candidates.csv", mime="text/csv")
 
     # ---------- 重新设计的可视化（六子图，符合顶刊风格）----------
@@ -364,7 +373,7 @@ if 'candidates' in st.session_state:
     n_candidates = len(df_viz)
     
     # 颜色映射：根据用户要求改为 Paired_r（离散色图，适用于分类，但此处用于连续变量）
-    cmap = plt.cm.Paired_r
+    cmap = plt.cm.PRGn_r
     norm = plt.Normalize(df_viz['Predicted_Adsorption'].min(), df_viz['Predicted_Adsorption'].max())
     colors_ads = [cmap(norm(val)) for val in df_viz['Predicted_Adsorption']]
     
@@ -496,6 +505,7 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
 
