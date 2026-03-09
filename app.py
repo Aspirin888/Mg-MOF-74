@@ -432,7 +432,7 @@ if 'candidates' in st.session_state:
                 title='Morphology', fontsize=9, title_fontsize=10, loc='upper left', bbox_to_anchor=(1,1))
 
     # ----- (d) 合成条件分布 -----
-    gs_d = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[1,0], hspace=0.7, wspace=0.7)
+    gs_d = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[1,0], hspace=0.5, wspace=0.5)
     axes_d = [fig.add_subplot(gs_d[i, j]) for i in range(2) for j in range(2)]
     cat_vars_display = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
     titles_d = ['(d1) Mg source', '(d2) Solvent', '(d3) Modification', '(d4) Morphology']
@@ -446,7 +446,7 @@ if 'candidates' in st.session_state:
         ax.set_ylabel('Count', fontsize=10, fontweight='bold')
         ax.set_title(title, fontsize=12, fontweight='bold')
         ax.set_xticks(x_pos)
-        ax.set_xticklabels(cats, rotation=0, ha='right', fontweight='bold', fontsize=9)
+        ax.set_xticklabels(cats, rotation=0, ha='center', fontweight='bold', fontsize=9)
         plt.setp(ax.get_yticklabels(), fontweight='bold')
         max_count = counts.max()
         ax.set_ylim(0, max_count * 1.2)
@@ -494,6 +494,7 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
 
