@@ -338,7 +338,7 @@ if 'candidates' in st.session_state:
     df_candidates['Objective'] = [r[2] for r in candidates]
         # 创建显示用副本，将分类变量映射为可读名称
     df_display = df_candidates.copy()
-    cat_cols = ['Mg_source', 'Solvent', 'Modification', 'Morphology']
+    cat_cols = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
     for col in cat_cols:
         df_display[col] = df_display[col].apply(lambda x: plot_label_mapping.get(f'{col}_{x}', x))
     
@@ -496,6 +496,7 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
 
