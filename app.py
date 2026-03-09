@@ -4,13 +4,13 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.cluster import KMeans
-from catboost import CatBoostRegressor
 from sko.GA import GA
 import joblib
 import warnings
+import time
+
 warnings.filterwarnings('ignore')
 
 # ========== 设置页面 ==========
@@ -23,6 +23,7 @@ plot_label_mapping = {
     'Molar ratio': 'Mg/ligand ratio',
     'SBET_m2_g': r'S$_{BET}$ (m$^2$/g)',
     'Vpore_cm3_g': r'V$_{pore}$ (cm$^3$/g)',
+    'dpore': r'$d_{pore}$ (nm)',
     'Pressure_MPa': 'Pressure (MPa)',
     'Temperature_K': 'Temperature (K)',
     'Adsorption_capacity_mmol_g': r'CO$_2$ uptake (mmol/g)',
@@ -58,20 +59,27 @@ def load_model():
 
 model, scaler = load_model()
 
-# ========== 从数据集提取特征信息 ==========
+# ========== 从数据集提取特征信息（使用 split 列）==========
 @st.cache_data
 def load_feature_info():
-    df = pd.read_csv('Mg_MOF_74_独热编码.csv')
-    X = df.drop('Adsorption_capacity_mmol_g', axis=1)
-    y = df['Adsorption_capacity_mmol_g']
+    df = pd.read_csv('Mg_MOF_74_过滤残差_abs_le1.csv')   # 请确认文件名正确
     
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # 按 split 列分离训练集和测试集
+    train_data = df[df['split'] == 'train'].copy()
+    test_data = df[df['split'] == 'test'].copy()
     
-    numeric_cols = ['Molar ratio', 'SBET_m2_g', 'Vpore_cm3_g']
+    target_col = 'Adsorption_capacity_mmol_g'
+    
+    X_train = train_data.drop(columns=[target_col, 'split'])
+    y_train = train_data[target_col]
+    
+    # 特征列
+    numeric_cols = ['Molar ratio', 'SBET_m2_g', 'Vpore_cm3_g', 'dpore']
     fixed_cols = ['Pressure_MPa', 'Temperature_K']
     cat_vars_names = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
-    all_cols = X.columns.tolist()
+    all_cols = X_train.columns.tolist()   # 保持与模型训练时完全一致的顺序
     
+    # 解析分类变量类别
     cat_vars = {name: [] for name in cat_vars_names}
     for col in all_cols:
         for var in cat_vars_names:
@@ -83,10 +91,12 @@ def load_feature_info():
     for var in cat_vars:
         cat_vars[var].sort()
     
+    # 单变量边界（基于训练数据）
     numeric_bounds = {}
     for col in numeric_cols:
         numeric_bounds[col] = (X_train[col].min(), X_train[col].max())
     
+    # SBET/Vpore 比值约束（基于训练数据）
     ratio_train = X_train['SBET_m2_g'] / (X_train['Vpore_cm3_g'] + 1e-6)
     q_low = ratio_train.quantile(0.025)
     q_high = ratio_train.quantile(0.975)
@@ -112,8 +122,8 @@ ratio_bounds = info['ratio_bounds']
 
 # ========== 约束和目标函数 ==========
 def constraint_penalty(x):
-    sbet = x[1]      # SBET_m2_g is the second continuous variable
-    vpore = x[2]     # Vpore_cm3_g is the third
+    sbet = x[1]      # SBET_m2_g 是第二个连续变量（索引1）
+    vpore = x[2]     # Vpore_cm3_g 是第三个（索引2）
     ratio = sbet / (vpore + 1e-6)
     q_low, q_high = ratio_bounds
     penalty = 0.0
@@ -128,20 +138,26 @@ def objective_func(x, T_target, P_target, Q_target, mode):
     cont_vals = x[:n_cont]
     cat_indices = x[n_cont:].astype(int)
 
+    # 索引合法性修正
     for j, (var, cats) in enumerate(cat_vars.items()):
         if cat_indices[j] < 0 or cat_indices[j] >= len(cats):
             cat_indices[j] = np.clip(cat_indices[j], 0, len(cats)-1)
 
+    # 构建特征向量
     x_vec = np.zeros(len(all_cols))
+
+    # 填充连续变量
     for i, col in enumerate(numeric_cols):
         idx = all_cols.index(col)
         x_vec[idx] = cont_vals[i]
 
+    # 填充固定温度压力
     idx_p = all_cols.index('Pressure_MPa')
     idx_t = all_cols.index('Temperature_K')
     x_vec[idx_p] = P_target
     x_vec[idx_t] = T_target
 
+    # 填充分类变量（独热编码）
     for j, (var, cats) in enumerate(cat_vars.items()):
         cat_name = cats[cat_indices[j]]
         onehot_col = f"{var}_{cat_name}"
@@ -160,10 +176,8 @@ def objective_func(x, T_target, P_target, Q_target, mode):
         return -pred + penalty
 
 # ========== 侧边栏输入 ==========
-
 st.sidebar.header("Environment Conditions")
 
-# 温度：范围 [273.0, 333.0]，默认 298.0
 T_target = st.sidebar.number_input(
     "Temperature (K)",
     value=298.0,
@@ -172,7 +186,6 @@ T_target = st.sidebar.number_input(
     step=1.0
 )
 
-# 压力：范围 [0.0001, 2.9491]，默认 0.1 (常压)
 P_target = st.sidebar.number_input(
     "Pressure (MPa)",
     value=0.1,
@@ -194,11 +207,20 @@ else:
 
 top_n = st.sidebar.slider("Number of candidates", min_value=1, max_value=10, value=5)
 use_clustering = st.sidebar.checkbox("Use clustering to select diverse candidates", value=True)
+
+# 添加 GA 参数调节以平衡速度
+st.sidebar.markdown("---")
+st.sidebar.subheader("GA Parameters (adjust for speed)")
+pop_size = st.sidebar.slider("Population size", min_value=50, max_value=300, value=100, step=10)
+max_iter = st.sidebar.slider("Max iterations", min_value=50, max_value=500, value=150, step=10)
+
 run_opt = st.sidebar.button("Start Optimization")
 
 # ========== 运行优化 ==========
 if run_opt:
-    with st.spinner("Running genetic algorithm optimization..."):
+    with st.spinner("Running genetic algorithm optimization... This may take 30-60 seconds."):
+        start_time = time.time()
+        
         n_cont = len(numeric_cols)
         n_cat = len(cat_vars)
         n_dim = n_cont + n_cat
@@ -209,11 +231,11 @@ if run_opt:
         ga = GA(
             func=lambda x: objective_func(x, T_target, P_target, Q_target, mode),
             n_dim=n_dim,
-            size_pop=200,
-            max_iter=300,
+            size_pop=pop_size,
+            max_iter=max_iter,
             lb=lb,
             ub=ub,
-            precision=1e-7
+            precision=1e-3          # 适当降低精度以加速
         )
 
         best_x, best_y = ga.run()
@@ -224,7 +246,6 @@ if run_opt:
 
         # 选择代表解
         if use_clustering and len(final_X) >= top_n:
-            # KMeans聚类选择
             scaler4cluster = StandardScaler()
             X_cont = final_X[:, :n_cont]
             X_cont_scaled = scaler4cluster.fit_transform(X_cont)
@@ -232,7 +253,7 @@ if run_opt:
             X_cluster = np.hstack([X_cont_scaled, X_cat * 0.5])
 
             n_clusters = min(top_n, len(final_X))
-            kmeans = KMeans(n_clusters=n_clusters, random_state=42).fit(X_cluster)
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10).fit(X_cluster)
             labels = kmeans.labels_
             centers = kmeans.cluster_centers_
 
@@ -246,14 +267,12 @@ if run_opt:
                 nearest_idx = np.where(labels == i)[0][np.argmin(dist)]
                 representative_idx.append(nearest_idx)
 
-            # 如果不够，补充目标函数最优的个体
             if len(representative_idx) < top_n:
                 additional = [i for i in np.argsort(final_Y)[:top_n] if i not in representative_idx]
                 representative_idx.extend(additional[:top_n - len(representative_idx)])
 
             top_idx = representative_idx[:top_n]
         else:
-            # 简单取目标函数最优的前top_n个
             sorted_idx = np.argsort(final_Y)
             top_idx = sorted_idx[:top_n]
 
@@ -295,6 +314,9 @@ if run_opt:
 
             candidates.append((result, pred, y))
 
+        elapsed = time.time() - start_time
+        st.success(f"Optimization completed in {elapsed:.1f} seconds.")
+
         st.session_state['candidates'] = candidates
         st.session_state['mode'] = mode
         st.session_state['Q_target'] = Q_target if mode == 'target' else None
@@ -313,7 +335,7 @@ if 'candidates' in st.session_state:
     df_candidates['Predicted_Adsorption'] = [r[1] for r in candidates]
     df_candidates['Objective'] = [r[2] for r in candidates]
 
-    # 显示表格
+    # 显示表格（包含 dpore）
     st.dataframe(
         df_candidates.style.format(
             {col: "{:.4f}" for col in numeric_cols + ['Predicted_Adsorption', 'Objective']}
@@ -323,19 +345,17 @@ if 'candidates' in st.session_state:
     csv = df_candidates.to_csv(index=False).encode('utf-8')
     st.download_button("Download candidates as CSV", data=csv, file_name="candidates.csv", mime="text/csv")
 
-    # ---------- 改进的可视化（两行三列） ----------
+    # ---------- 可视化（两行三列）----------
     st.markdown("### Visualizations")
 
-    # 准备数据
+    # 准备数据（平行坐标图仍使用 SBET, Vpore, 预测值，不包含 dpore 以免拥挤）
     cont_vars_structure = ['SBET_m2_g', 'Vpore_cm3_g', 'Predicted_Adsorption']
     scaler_mm = MinMaxScaler()
     data_mm_struct = scaler_mm.fit_transform(df_candidates[cont_vars_structure])
     df_mm_struct = pd.DataFrame(data_mm_struct, columns=cont_vars_structure)
 
-    # 颜色
     colors = plt.cm.tab10(np.linspace(0, 1, len(df_candidates)))
 
-    # 创建图形
     fig = plt.figure(figsize=(20, 11))
     gs = gridspec.GridSpec(2, 3, figure=fig,
                            width_ratios=[1.25, 1.2, 1],
@@ -349,7 +369,7 @@ if 'candidates' in st.session_state:
     ax_e = fig.add_subplot(gs[1, 1])  # (e) 合成分类变量分布
     ax_f = fig.add_subplot(gs[1, 2])  # (f) 预测值排序
 
-    # ----- (a) 结构平行坐标图 -----
+    # (a) 结构平行坐标图
     for i in range(len(df_mm_struct)):
         ax_a.plot(range(len(cont_vars_structure)), df_mm_struct.iloc[i, :],
                   color='gray', alpha=0.2, linewidth=1, zorder=1)
@@ -365,7 +385,7 @@ if 'candidates' in st.session_state:
     ax_a.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=False, prop={'weight':'bold', 'size':11})
     ax_a.tick_params(axis='both', labelsize=11)
 
-    # ----- (b) 结构-性能散点图 -----
+    # (b) 结构-性能散点图
     sc = ax_b.scatter(df_candidates['SBET_m2_g'], df_candidates['Vpore_cm3_g'],
                       c=df_candidates['Predicted_Adsorption'], cmap='viridis',
                       s=120, edgecolor='k', linewidth=0.8,
@@ -376,11 +396,10 @@ if 'candidates' in st.session_state:
     ax_b.set_title('(b) Structure–performance map', fontweight='bold', fontsize=14)
     cbar = plt.colorbar(sc, ax=ax_b, fraction=0.046, pad=0.04)
     cbar.set_label(r'CO$_2$ uptake (mmol/g)', fontweight='bold', fontsize=11)
-    cbar.ax.yaxis.label.set_weight('bold')
     cbar.ax.tick_params(labelsize=9)
     ax_b.tick_params(labelsize=11)
 
-    # ----- (c) 形貌分布 -----
+    # (c) 形貌分布
     morph_counts = df_candidates['Morphology'].value_counts()
     cats_readable = [plot_label_mapping.get('Morphology_' + c, c) for c in morph_counts.index]
     bars_c = ax_c.barh(cats_readable, morph_counts.values, color=colors[:len(morph_counts)], edgecolor='black')
@@ -389,13 +408,10 @@ if 'candidates' in st.session_state:
     for bar, count in zip(bars_c, morph_counts.values):
         ax_c.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height()/2, str(count),
                   va='center', ha='left', fontsize=10, fontweight='bold')
-    # 调整x轴范围，防止标签溢出
-    max_width_c = max(bar.get_width() for bar in bars_c)
-    ax_c.set_xlim(right=max_width_c * 1.15)  # 预留15%空间给标签
     ax_c.tick_params(axis='x', labelsize=11)
     ax_c.tick_params(axis='y', labelsize=11)
-    
-    # ----- (d) 摩尔比与预测值散点图 -----
+
+    # (d) 摩尔比与预测值散点图
     sc_d = ax_d.scatter(range(1, len(df_candidates)+1), df_candidates['Molar ratio'],
                         c=df_candidates['Predicted_Adsorption'], cmap='viridis',
                         s=120, edgecolor='k', linewidth=0.8,
@@ -408,9 +424,8 @@ if 'candidates' in st.session_state:
     ax_d.tick_params(labelsize=11)
     cbar_d = plt.colorbar(sc_d, ax=ax_d, fraction=0.046, pad=0.04)
     cbar_d.set_label(r'CO$_2$ uptake (mmol/g)', fontweight='bold', fontsize=9)
-    cbar_d.ax.tick_params(labelsize=9)   # 修正：将刻度标签字号设为9
-    
-    # ----- (e) 合成分类变量分布（合并）-----
+
+    # (e) 合成分类变量分布（合并）
     syn_cat_vars = ['Mg_source', 'Solvent', 'Treatment']
     all_cats = []
     all_counts = []
@@ -423,7 +438,7 @@ if 'candidates' in st.session_state:
             all_cats.append(readable)
             all_counts.append(cnt)
             all_colors.append(colors[vi % len(colors)])
-    
+
     bars_e = ax_e.barh(range(len(all_cats)), all_counts, color=all_colors, edgecolor='black')
     ax_e.set_yticks(range(len(all_cats)))
     ax_e.set_yticklabels(all_cats, fontweight='bold', fontsize=11)
@@ -432,12 +447,9 @@ if 'candidates' in st.session_state:
     for bar, cnt in zip(bars_e, all_counts):
         ax_e.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height()/2, str(cnt),
                   va='center', ha='left', fontsize=10, fontweight='bold')
-    # 调整x轴范围，防止标签溢出
-    max_width_e = max(bar.get_width() for bar in bars_e)
-    ax_e.set_xlim(right=max_width_e * 1.15)  # 预留15%空间
     ax_e.tick_params(axis='x', labelsize=11)
 
-    # ----- (f) 预测值排序条形图 -----
+    # (f) 预测值排序条形图
     x_pos = np.arange(1, len(df_candidates)+1)
     bars_f = ax_f.bar(x_pos, df_candidates['Predicted_Adsorption'], color=colors, edgecolor='black')
     ax_f.set_xlabel('Candidate', fontweight='bold', fontsize=12)
@@ -452,8 +464,3 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
-
-
-
-
-
