@@ -436,21 +436,23 @@ if 'candidates' in st.session_state:
     axes_d = [fig.add_subplot(gs_d[i, j]) for i in range(2) for j in range(2)]
     cat_vars_display = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
     titles_d = ['(d1) Mg source', '(d2) Solvent', '(d3) Modification', '(d4) Morphology']
-
+    
     for idx, (var, ax, title) in enumerate(zip(cat_vars_display, axes_d, titles_d)):
         counts = df_viz[var].value_counts()
         cats = [plot_label_mapping.get(f'{var}_{c}', c) for c in counts.index]
+        x_pos = np.arange(len(cats))
         colors_d = [plt.cm.Set3_r(i / max(1, len(counts)-1)) for i in range(len(counts))]
-        bars = ax.barh(cats, counts.values, color=colors_d, edgecolor='black')
-        ax.set_xlabel('Count', fontsize=10, fontweight='bold')
+        bars = ax.bar(x_pos, counts.values, color=colors_d, edgecolor='black')
+        ax.set_ylabel('Count', fontsize=10, fontweight='bold')
         ax.set_title(title, fontsize=12, fontweight='bold')
-        ax.set_yticklabels(cats, fontweight='bold', fontsize=9)
-        plt.setp(ax.get_xticklabels(), fontweight='bold')
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(cats, rotation=45, ha='right', fontweight='bold', fontsize=9)
+        plt.setp(ax.get_yticklabels(), fontweight='bold')
         max_count = counts.max()
-        ax.set_xlim(0, max_count * 1.2)
+        ax.set_ylim(0, max_count * 1.2)
         for bar, cnt in zip(bars, counts.values):
-            ax.text(bar.get_width() + 0.15, bar.get_y() + bar.get_height()/2, str(cnt),
-                    va='center', ha='left', fontsize=11, fontweight='bold')
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.05, str(cnt),
+                    ha='center', va='bottom', fontsize=11, fontweight='bold')
     ax_d.axis('off')
 
     # ----- (e) 性能排序条形图 -----
@@ -492,6 +494,7 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
 
