@@ -346,134 +346,138 @@ if 'candidates' in st.session_state:
     csv = df_candidates.to_csv(index=False).encode('utf-8')
     st.download_button("Download candidates as CSV", data=csv, file_name="candidates.csv", mime="text/csv")
 
-    # ---------- 改进的可视化（包含 dpore）----------
+# ---------- 重新设计的可视化（六子图，符合顶刊风格）----------
     st.markdown("### Visualizations")
-
-    # 准备数据（平行坐标图包含 dpore）
-    cont_vars_structure = ['SBET_m2_g', 'Vpore_cm3_g', 'dpore', 'Predicted_Adsorption']
-    scaler_mm = MinMaxScaler()
-    data_mm_struct = scaler_mm.fit_transform(df_candidates[cont_vars_structure])
-    df_mm_struct = pd.DataFrame(data_mm_struct, columns=cont_vars_structure)
-
-    colors = plt.cm.tab10(np.linspace(0, 1, len(df_candidates)))
-
-    fig = plt.figure(figsize=(20, 11))
-    gs = gridspec.GridSpec(2, 3, figure=fig,
-                           width_ratios=[1.25, 1.2, 1],
-                           wspace=0.5, hspace=0.5,
-                           left=0.12, right=0.94, bottom=0.1, top=0.92)
-
-    ax_a = fig.add_subplot(gs[0, 0])  # (a) 结构平行坐标（含 dpore）
-    ax_b = fig.add_subplot(gs[0, 1])  # (b) 结构-性能散点（大小表示 dpore）
-    ax_c = fig.add_subplot(gs[0, 2])  # (c) 形貌分布
-    ax_d = fig.add_subplot(gs[1, 0])  # (d) 摩尔比 vs dpore 散点
-    ax_e = fig.add_subplot(gs[1, 1])  # (e) 合成分类变量分布
-    ax_f = fig.add_subplot(gs[1, 2])  # (f) 预测值排序
-
-    # ----- (a) 结构平行坐标图（含 dpore）-----
-    for i in range(len(df_mm_struct)):
-        ax_a.plot(range(len(cont_vars_structure)), df_mm_struct.iloc[i, :],
-                  color='gray', alpha=0.2, linewidth=1, zorder=1)
-    for i in range(len(df_mm_struct)):
-        ax_a.plot(range(len(cont_vars_structure)), df_mm_struct.iloc[i, :],
-                  color=colors[i], linewidth=2, label=f'C{i+1}', zorder=2)
-    xticklabels = [plot_label_mapping.get(v, v) for v in cont_vars_structure]
-    xticklabels[-1] = r'CO$_2$ uptake (mmol/g)'
-    ax_a.set_xticks(range(len(cont_vars_structure)))
-    ax_a.set_xticklabels(xticklabels, rotation=45, ha='right', fontweight='bold', fontsize=12)
-    ax_a.set_ylabel('Normalized value', fontweight='bold', fontsize=12)
-    ax_a.set_title('(a) Structural features (incl. pore size)', fontweight='bold', fontsize=14)
-    ax_a.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=False, prop={'weight':'bold', 'size':11})
-    ax_a.tick_params(axis='both', labelsize=11)
-
-    # ----- (b) 结构-性能散点图，点大小表示 dpore -----
-    # 将 dpore 归一化到点大小范围 30~200
-    dpore_norm = (df_candidates['dpore'] - df_candidates['dpore'].min()) / (df_candidates['dpore'].max() - df_candidates['dpore'].min() + 1e-6)
-    sizes = 30 + dpore_norm * 170
-
-    sc = ax_b.scatter(df_candidates['SBET_m2_g'], df_candidates['Vpore_cm3_g'],
-                      c=df_candidates['Predicted_Adsorption'], cmap='viridis',
-                      s=sizes, edgecolor='k', linewidth=0.8,
-                      vmin=df_candidates['Predicted_Adsorption'].min(),
-                      vmax=df_candidates['Predicted_Adsorption'].max())
-    ax_b.set_xlabel(plot_label_mapping['SBET_m2_g'], fontweight='bold', fontsize=12)
-    ax_b.set_ylabel(plot_label_mapping['Vpore_cm3_g'], fontweight='bold', fontsize=12)
-    ax_b.set_title('(b) Structure–performance map (size = pore size)', fontweight='bold', fontsize=14)
-    cbar = plt.colorbar(sc, ax=ax_b, fraction=0.046, pad=0.04)
-    cbar.set_label(r'CO$_2$ uptake (mmol/g)', fontweight='bold', fontsize=11)
-    cbar.ax.tick_params(labelsize=9)
-    ax_b.tick_params(labelsize=11)
-
-    # 添加点大小图例
-    legend_elements = [
-        Line2D([0], [0], marker='o', color='w', label=f'dpore: {df_candidates["dpore"].min():.2f} nm',
-               markerfacecolor='gray', markersize=np.sqrt(30)),
-        Line2D([0], [0], marker='o', color='w', label=f'dpore: {df_candidates["dpore"].max():.2f} nm',
-               markerfacecolor='gray', markersize=np.sqrt(200))
-    ]
-    ax_b.legend(handles=legend_elements, loc='upper right', fontsize=9, frameon=False)
-
-    # ----- (c) 形貌分布 (不变) -----
-    morph_counts = df_candidates['Morphology'].value_counts()
-    cats_readable = [plot_label_mapping.get('Morphology_' + c, c) for c in morph_counts.index]
-    bars_c = ax_c.barh(cats_readable, morph_counts.values, color=colors[:len(morph_counts)], edgecolor='black')
-    ax_c.set_xlabel('Count', fontweight='bold', fontsize=12)
-    ax_c.set_title('(c) Morphology distribution', fontweight='bold', fontsize=14)
-    for bar, count in zip(bars_c, morph_counts.values):
-        ax_c.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height()/2, str(count),
-                  va='center', ha='left', fontsize=10, fontweight='bold')
-    ax_c.tick_params(axis='x', labelsize=11)
-    ax_c.tick_params(axis='y', labelsize=11)
-
-    # ----- (d) 摩尔比 vs dpore 散点图 -----
-    sc_d = ax_d.scatter(df_candidates['Molar ratio'], df_candidates['dpore'],
-                        c=df_candidates['Predicted_Adsorption'], cmap='viridis',
-                        s=120, edgecolor='k', linewidth=0.8,
-                        vmin=df_candidates['Predicted_Adsorption'].min(),
-                        vmax=df_candidates['Predicted_Adsorption'].max())
-    ax_d.set_xlabel(plot_label_mapping['Molar ratio'], fontweight='bold', fontsize=12)
-    ax_d.set_ylabel(plot_label_mapping['dpore'], fontweight='bold', fontsize=12)
-    ax_d.set_title('(d) Molar ratio vs pore size', fontweight='bold', fontsize=14)
-    ax_d.tick_params(labelsize=11)
-    cbar_d = plt.colorbar(sc_d, ax=ax_d, fraction=0.046, pad=0.04)
-    cbar_d.set_label(r'CO$_2$ uptake (mmol/g)', fontweight='bold', fontsize=9)
-
-    # ----- (e) 合成分类变量分布 (不变) -----
-    syn_cat_vars = ['Mg_source', 'Solvent', 'Treatment']
-    all_cats = []
-    all_counts = []
-    all_colors = []
-    for vi, var in enumerate(syn_cat_vars):
-        counts = df_candidates[var].value_counts()
-        for cat, cnt in counts.items():
-            full_key = var + '_' + cat
-            readable = plot_label_mapping.get(full_key, cat)
-            all_cats.append(readable)
-            all_counts.append(cnt)
-            all_colors.append(colors[vi % len(colors)])
-
-    bars_e = ax_e.barh(range(len(all_cats)), all_counts, color=all_colors, edgecolor='black')
-    ax_e.set_yticks(range(len(all_cats)))
-    ax_e.set_yticklabels(all_cats, fontweight='bold', fontsize=11)
-    ax_e.set_xlabel('Count', fontweight='bold', fontsize=12)
-    ax_e.set_title('(e) Synthesis categorical variables', fontweight='bold', fontsize=14)
-    for bar, cnt in zip(bars_e, all_counts):
-        ax_e.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height()/2, str(cnt),
-                  va='center', ha='left', fontsize=10, fontweight='bold')
-    ax_e.tick_params(axis='x', labelsize=11)
-
-    # ----- (f) 预测值排序条形图 (不变) -----
-    x_pos = np.arange(1, len(df_candidates)+1)
-    bars_f = ax_f.bar(x_pos, df_candidates['Predicted_Adsorption'], color=colors, edgecolor='black')
-    ax_f.set_xlabel('Candidate', fontweight='bold', fontsize=12)
-    ax_f.set_ylabel(r'CO$_2$ uptake (mmol/g)', fontweight='bold', fontsize=12)
-    ax_f.set_title('(f) Adsorption capacity of candidates', fontweight='bold', fontsize=14)
-    ax_f.set_xticks(x_pos)
-    ax_f.set_xticklabels([f'{i}' for i in x_pos], fontweight='bold', fontsize=11)
-    ax_f.tick_params(axis='y', labelsize=11)
-
-    plt.suptitle(r'Reverse design of Mg-MOF-74 for CO$_2$ capture', fontsize=22, weight='bold', y=0.98)
+    
+    # 准备数据
+    df_viz = df_candidates.copy()
+    n_candidates = len(df_viz)
+    
+    # 颜色映射：吸附容量
+    cmap = plt.cm.viridis
+    norm = plt.Normalize(df_viz['Predicted_Adsorption'].min(), df_viz['Predicted_Adsorption'].max())
+    colors_ads = [cmap(norm(val)) for val in df_viz['Predicted_Adsorption']]
+    
+    # 创建图形
+    fig = plt.figure(figsize=(20, 12))
+    gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.3,
+                           left=0.08, right=0.92, bottom=0.1, top=0.92)
+    
+    ax_a = fig.add_subplot(gs[0, 0])  # (a) SBET vs Vpore
+    ax_b = fig.add_subplot(gs[0, 1])  # (b) dpore vs Adsorption
+    ax_c = fig.add_subplot(gs[0, 2])  # (c) Molar ratio vs Adsorption
+    ax_d = fig.add_subplot(gs[1, 0])  # (d) 合成条件分布（使用子图内嵌）
+    ax_e = fig.add_subplot(gs[1, 1])  # (e) 性能排序
+    ax_f = fig.add_subplot(gs[1, 2])  # (f) 平行坐标
+    
+    # ----- (a) SBET vs Vpore，颜色表示吸附容量 -----
+    sc_a = ax_a.scatter(df_viz['SBET_m2_g'], df_viz['Vpore_cm3_g'],
+                        c=df_viz['Predicted_Adsorption'], cmap='viridis',
+                        s=100, edgecolor='k', linewidth=0.8, zorder=5)
+    ax_a.set_xlabel(plot_label_mapping['SBET_m2_g'], fontsize=13, fontweight='bold')
+    ax_a.set_ylabel(plot_label_mapping['Vpore_cm3_g'], fontsize=13, fontweight='bold')
+    ax_a.set_title('(a) Surface area vs pore volume', fontsize=15, fontweight='bold')
+    ax_a.grid(True, linestyle='--', alpha=0.3, zorder=0)
+    # 添加候选编号
+    for i, (x, y) in enumerate(zip(df_viz['SBET_m2_g'], df_viz['Vpore_cm3_g'])):
+        ax_a.annotate(str(i+1), (x, y), textcoords="offset points", xytext=(5,5),
+                      fontsize=9, fontweight='bold', color='black')
+    cbar_a = plt.colorbar(sc_a, ax=ax_a, fraction=0.046, pad=0.04)
+    cbar_a.set_label(r'CO$_2$ uptake (mmol/g)', fontsize=12, fontweight='bold')
+    
+    # ----- (b) dpore vs Adsorption，颜色表示摩尔比 -----
+    sc_b = ax_b.scatter(df_viz['dpore'], df_viz['Predicted_Adsorption'],
+                        c=df_viz['Molar ratio'], cmap='plasma',
+                        s=100, edgecolor='k', linewidth=0.8, zorder=5)
+    ax_b.set_xlabel(plot_label_mapping['dpore'], fontsize=13, fontweight='bold')
+    ax_b.set_ylabel(r'CO$_2$ uptake (mmol/g)', fontsize=13, fontweight='bold')
+    ax_b.set_title('(b) Pore size vs uptake', fontsize=15, fontweight='bold')
+    ax_b.grid(True, linestyle='--', alpha=0.3, zorder=0)
+    for i, (x, y) in enumerate(zip(df_viz['dpore'], df_viz['Predicted_Adsorption'])):
+        ax_b.annotate(str(i+1), (x, y), textcoords="offset points", xytext=(5,5),
+                      fontsize=9, fontweight='bold', color='black')
+    cbar_b = plt.colorbar(sc_b, ax=ax_b, fraction=0.046, pad=0.04)
+    cbar_b.set_label('Mg/ligand ratio', fontsize=12, fontweight='bold')
+    
+    # ----- (c) Molar ratio vs Adsorption，颜色表示形貌 -----
+    # 将形貌转换为数值标签用于颜色映射（分类颜色）
+    morph_categories = df_viz['Morphology'].astype('category')
+    morph_codes = morph_categories.cat.codes
+    unique_morphs = morph_categories.cat.categories
+    # 使用tab10颜色映射
+    cmap_morph = plt.cm.tab10
+    colors_morph = [cmap_morph(i % 10) for i in morph_codes]
+    sc_c = ax_c.scatter(df_viz['Molar ratio'], df_viz['Predicted_Adsorption'],
+                        c=morph_codes, cmap='tab10', s=100, edgecolor='k', linewidth=0.8, zorder=5)
+    ax_c.set_xlabel(plot_label_mapping['Molar ratio'], fontsize=13, fontweight='bold')
+    ax_c.set_ylabel(r'CO$_2$ uptake (mmol/g)', fontsize=13, fontweight='bold')
+    ax_c.set_title('(c) Molar ratio vs uptake', fontsize=15, fontweight='bold')
+    ax_c.grid(True, linestyle='--', alpha=0.3, zorder=0)
+    for i, (x, y) in enumerate(zip(df_viz['Molar ratio'], df_viz['Predicted_Adsorption'])):
+        ax_c.annotate(str(i+1), (x, y), textcoords="offset points", xytext=(5,5),
+                      fontsize=9, fontweight='bold', color='black')
+    # 手动添加图例
+    handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=cmap_morph(i), markersize=8)
+               for i in range(len(unique_morphs))]
+    ax_c.legend(handles, [plot_label_mapping.get('Morphology_'+m, m) for m in unique_morphs],
+                title='Morphology', fontsize=9, title_fontsize=10, loc='upper left', bbox_to_anchor=(1,1))
+    
+    # ----- (d) 合成条件分布（四个水平条形图嵌入一个子图）-----
+    # 使用 gridspec 在 ax_d 内创建 2x2 子网格
+    gs_d = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[1,0], hspace=0.4, wspace=0.4)
+    axes_d = [fig.add_subplot(gs_d[i, j]) for i in range(2) for j in range(2)]
+    cat_vars_display = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
+    titles_d = ['(d1) Mg source', '(d2) Solvent', '(d3) Treatment', '(d4) Morphology']
+    
+    for idx, (var, ax, title) in enumerate(zip(cat_vars_display, axes_d, titles_d)):
+        counts = df_viz[var].value_counts()
+        cats = [plot_label_mapping.get(f'{var}_{c}', c) for c in counts.index]
+        bars = ax.barh(cats, counts.values, color=colors_ads[:len(counts)], edgecolor='black')
+        ax.set_xlabel('Count', fontsize=10, fontweight='bold')
+        ax.set_title(title, fontsize=12, fontweight='bold')
+        ax.tick_params(axis='y', labelsize=9)
+        for bar, cnt in zip(bars, counts.values):
+            ax.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height()/2, str(cnt),
+                    va='center', ha='left', fontsize=9, fontweight='bold')
+    # 移除多余的刻度
+    ax_d.axis('off')  # 隐藏外部坐标轴
+    
+    # ----- (e) 性能排序条形图 -----
+    x_pos = np.arange(1, n_candidates+1)
+    bars_e = ax_e.bar(x_pos, df_viz['Predicted_Adsorption'], color=colors_ads, edgecolor='black')
+    ax_e.set_xlabel('Candidate', fontsize=13, fontweight='bold')
+    ax_e.set_ylabel(r'CO$_2$ uptake (mmol/g)', fontsize=13, fontweight='bold')
+    ax_e.set_title('(e) Adsorption capacity of candidates', fontsize=15, fontweight='bold')
+    ax_e.set_xticks(x_pos)
+    ax_e.set_xticklabels([f'{i}' for i in x_pos], fontweight='bold')
+    ax_e.grid(axis='y', linestyle='--', alpha=0.3)
+    for bar, val in zip(bars_e, df_viz['Predicted_Adsorption']):
+        ax_e.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02, f'{val:.2f}',
+                  ha='center', va='bottom', fontsize=10, fontweight='bold')
+    
+    # ----- (f) 综合平行坐标图（所有连续变量归一化）-----
+    cont_all = ['Molar ratio', 'SBET_m2_g', 'Vpore_cm3_g', 'dpore', 'Predicted_Adsorption']
+    scaler_parallel = MinMaxScaler()
+    data_parallel = scaler_parallel.fit_transform(df_viz[cont_all])
+    x_ticks = np.arange(len(cont_all))
+    for i in range(n_candidates):
+        ax_f.plot(x_ticks, data_parallel[i], color=colors_ads[i], linewidth=2, alpha=0.8, marker='o', markersize=6)
+    ax_f.set_xticks(x_ticks)
+    ax_f.set_xticklabels([plot_label_mapping.get(c, c) for c in cont_all], rotation=45, ha='right', fontsize=11)
+    ax_f.set_ylabel('Normalized value', fontsize=13, fontweight='bold')
+    ax_f.set_title('(f) Parallel coordinates of all variables', fontsize=15, fontweight='bold')
+    ax_f.grid(True, linestyle='--', alpha=0.3)
+    # 添加颜色条表示吸附容量
+    norm_f = plt.Normalize(df_viz['Predicted_Adsorption'].min(), df_viz['Predicted_Adsorption'].max())
+    sm_f = plt.cm.ScalarMappable(cmap=cmap, norm=norm_f)
+    sm_f.set_array([])
+    cbar_f = fig.colorbar(sm_f, ax=ax_f, fraction=0.046, pad=0.04)
+    cbar_f.set_label(r'CO$_2$ uptake (mmol/g)', fontsize=12, fontweight='bold')
+    
+    # 整体标题
+    plt.suptitle(r'Reverse design of Mg-MOF-74 for CO$_2$ capture', fontsize=24, weight='bold', y=0.98)
     st.pyplot(fig)
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
