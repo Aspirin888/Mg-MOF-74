@@ -24,7 +24,7 @@ plot_label_mapping = {
     'Molar ratio': 'Mg/ligand ratio',
     'SBET_m2_g': r'S$_{BET}$ (m$^2$/g)',
     'Vpore_cm3_g': r'V$_{pore}$ (cm$^3$/g)',
-    'dpore': r'$d_{pore}$ (nm)',
+    'dpore': r'd$_{pore}$ (nm)',
     'Pressure_MPa': 'Pressure (MPa)',
     'Temperature_K': 'Temperature (K)',
     'Adsorption_capacity_mmol_g': r'CO$_2$ uptake (mmol/g)',
@@ -403,7 +403,7 @@ if 'candidates' in st.session_state:
     sc_b = ax_b.scatter(df_viz['dpore'], df_viz['Predicted_Adsorption'],
                         c=df_viz['Molar ratio'], cmap='Set3_r',
                         s=100, edgecolor='k', linewidth=0.8, zorder=5)
-    ax_b.set_xlabel(plot_label_mapping['dpore'], fontsize=13, fontweight='bold')
+    ax_b.set_xlabel(r'd$_{\text{pore}}$ (nm)', fontsize=13, fontweight='bold')
     ax_b.set_ylabel(r'CO$_2$ uptake (mmol/g)', fontsize=13, fontweight='bold')
     ax_b.set_title('(b) Pore size vs uptake', fontsize=15, fontweight='bold')
     ax_b.grid(True, linestyle='--', alpha=0.3, zorder=0)
@@ -429,10 +429,10 @@ if 'candidates' in st.session_state:
     handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=cmap_morph(i), markersize=8)
                for i in range(len(unique_morphs))]
     ax_c.legend(handles, [plot_label_mapping.get('Morphology_'+m, m) for m in unique_morphs],
-                title='Morphology', fontsize=9, title_fontsize=10, loc='upper left', bbox_to_anchor=(1,1))
+                title='Morphology', fontsize=9, title_fontsize=10, fontweight='bold', loc='upper left', bbox_to_anchor=(1,1))
 
     # ----- (d) 合成条件分布 -----
-    gs_d = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[1,0], hspace=0.5, wspace=0.5)
+    gs_d = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[1,0], hspace=0.2, wspace=0.2)
     axes_d = [fig.add_subplot(gs_d[i, j]) for i in range(2) for j in range(2)]
     cat_vars_display = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
     titles_d = ['(d1) Mg source', '(d2) Solvent', '(d3) Modification', '(d4) Morphology']
@@ -446,7 +446,7 @@ if 'candidates' in st.session_state:
         ax.set_ylabel('Count', fontsize=10, fontweight='bold')
         ax.set_title(title, fontsize=12, fontweight='bold')
         ax.set_xticks(x_pos)
-        ax.set_xticklabels(cats, rotation=0, ha='center', fontweight='bold', fontsize=9)
+        ax.set_xticklabels(cats, rotation=0, ha='center', fontweight='bold', fontsize=12)
         plt.setp(ax.get_yticklabels(), fontweight='bold')
         max_count = counts.max()
         ax.set_ylim(0, max_count * 1.2)
@@ -494,6 +494,7 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
 
