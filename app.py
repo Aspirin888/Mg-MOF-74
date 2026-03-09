@@ -446,7 +446,7 @@ if 'candidates' in st.session_state:
         ax.set_ylabel('Count', fontsize=10, fontweight='bold')
         ax.set_title(title, fontsize=12, fontweight='bold')
         ax.set_xticks(x_pos)
-        ax.set_xticklabels(cats, rotation=45, ha='right', fontweight='bold', fontsize=9)
+        ax.set_xticklabels(cats, rotation=0, ha='right', fontweight='bold', fontsize=9)
         plt.setp(ax.get_yticklabels(), fontweight='bold')
         max_count = counts.max()
         ax.set_ylim(0, max_count * 1.2)
@@ -494,6 +494,7 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
 
