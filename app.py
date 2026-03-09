@@ -428,11 +428,12 @@ if 'candidates' in st.session_state:
     plt.setp(ax_c.get_yticklabels(), fontweight='bold')
     handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=cmap_morph(i), markersize=8)
                for i in range(len(unique_morphs))]
-    ax_c.legend(handles, [plot_label_mapping.get('Morphology_'+m, m) for m in unique_morphs],
-                title='Morphology', fontsize=9, title_fontsize=10, loc='upper left', bbox_to_anchor=(1,1))
-
+    legend = ax_c.legend(handles, [plot_label_mapping.get('Morphology_'+m, m) for m in unique_morphs],
+                         title='Morphology', fontsize=9, loc='upper left', bbox_to_anchor=(1,1),
+                         prop={'weight':'bold'})
+    plt.setp(legend.get_title(), fontweight='bold')   # 图例标题加粗
     # ----- (d) 合成条件分布 -----
-    gs_d = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[1,0], hspace=0.2, wspace=0.2)
+    gs_d = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[1,0], hspace=0.35, wspace=0.35)
     axes_d = [fig.add_subplot(gs_d[i, j]) for i in range(2) for j in range(2)]
     cat_vars_display = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
     titles_d = ['(d1) Mg source', '(d2) Solvent', '(d3) Modification', '(d4) Morphology']
@@ -494,6 +495,7 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
 
