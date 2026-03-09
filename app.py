@@ -17,7 +17,7 @@ warnings.filterwarnings('ignore')
 # ========== 设置页面 ==========
 st.set_page_config(page_title="Mg-MOF-74 Inverse Design Platform", layout="wide")
 st.title("Mg-MOF-74 Adsorbent Inverse Design Platform")
-st.markdown("Based on CatBoost model and genetic algorithm to search for optimal synthesis and structural parameters for CO₂ capture.")
+st.markdown("Based on Bag_ET_GB_RF_XGB model and genetic algorithm to search for optimal synthesis and structural parameters for CO₂ capture.")
 
 # ========== 英文标签映射（添加 dpore）==========
 plot_label_mapping = {
@@ -429,7 +429,7 @@ if 'candidates' in st.session_state:
     handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=cmap_morph(i), markersize=8)
                for i in range(len(unique_morphs))]
     ax_c.legend(handles, [plot_label_mapping.get('Morphology_'+m, m) for m in unique_morphs],
-                title='Morphology', fontsize=9, title_fontsize=10, fontweight='bold', loc='upper left', bbox_to_anchor=(1,1))
+                title='Morphology', fontsize=9, title_fontsize=10, loc='upper left', bbox_to_anchor=(1,1))
 
     # ----- (d) 合成条件分布 -----
     gs_d = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[1,0], hspace=0.2, wspace=0.2)
@@ -494,6 +494,7 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
 
