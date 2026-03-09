@@ -375,7 +375,7 @@ if 'candidates' in st.session_state:
 
     # 创建图形
     fig = plt.figure(figsize=(20, 12))
-    gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.3,
+    gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.35,
                            left=0.08, right=0.92, bottom=0.1, top=0.92)
 
     ax_a = fig.add_subplot(gs[0, 0])  # (a) SBET vs Vpore
@@ -492,6 +492,7 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
+
 
 
 
