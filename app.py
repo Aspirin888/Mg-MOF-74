@@ -55,7 +55,7 @@ plot_label_mapping = {
 # ========== 加载模型和标准化器 ==========
 @st.cache_resource
 def load_model():
-    model = joblib.load('CatBoost.pkl')        # 确保模型文件存在
+    model = joblib.load('Bag_ET_GB_RF_XGB.pkl')        # 确保模型文件存在
     scaler = joblib.load('scaler.pkl')          # 确保标准化器文件存在
     return model, scaler
 
@@ -64,7 +64,7 @@ model, scaler = load_model()
 # ========== 从数据集提取特征信息（使用 split 列）==========
 @st.cache_data
 def load_feature_info():
-    df = pd.read_csv('Mg_MOF_74_过滤残差_abs_le1.csv')   # 请确认文件名正确
+    df = pd.read_csv('Mg_MOF_74.csv')   # 请确认文件名正确
     
     # 按 split 列分离训练集和测试集
     train_data = df[df['split'] == 'train'].copy()
