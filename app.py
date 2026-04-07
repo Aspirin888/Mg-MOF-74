@@ -19,7 +19,7 @@ st.set_page_config(page_title="Mg-MOF-74 Inverse Design Platform", layout="wide"
 st.title("Mg-MOF-74 Adsorbent Inverse Design Platform")
 st.markdown("Based on Bag_ET_GB_RF_XGB model and genetic algorithm to search for optimal synthesis and structural parameters for CO₂ capture.")
 
-# ========== 英文标签映射（添加 dpore）==========
+# ========== 英文标签映射 ==========
 plot_label_mapping = {
     'Molar ratio': 'Mg/ligand ratio',
     'SBET_m2_g': r'S$_{BET}$ (m$^2$/g)',
@@ -28,7 +28,6 @@ plot_label_mapping = {
     'Pressure_MPa': 'Pressure (MPa)',
     'Temperature_K': 'Temperature (K)',
     'Adsorption_capacity_mmol_g': r'CO$_2$ uptake (mmol/g)',
-    # 合成分类变量
     'Mg_source_acetate_mg_source': 'Acetate',
     'Mg_source_nitrate_mg_source': 'Nitrate',
     'Mg_source_other_mg_salts': 'Other Mg salts',
@@ -43,7 +42,6 @@ plot_label_mapping = {
     'Treatment_organic_acid_treatment': 'Organic acid',
     'Treatment_other_treatment': 'Other modification',
     'Treatment_polymer_treatment': 'Polymer modification',
-    'Treatment_post_base_treatment': 'Post base modification',
     'Treatment_post_base_treatment': 'Post base',
     'Morphology_flower_like_structure': 'Flower-like',
     'Morphology_other_morphology': 'Other',
@@ -55,8 +53,8 @@ plot_label_mapping = {
 # ========== 加载模型和标准化器 ==========
 @st.cache_resource
 def load_model():
-    model = joblib.load('Bag_ET_GB_RF_XGB.pkl')        # 确保模型文件存在
-    scaler = joblib.load('scaler.pkl')          # 确保标准化器文件存在
+    model = joblib.load('Bag_ET_GB_RF_XGB.pkl')
+    scaler = joblib.load('scaler.pkl')
     return model, scaler
 
 model, scaler = load_model()
@@ -64,22 +62,18 @@ model, scaler = load_model()
 # ========== 从数据集提取特征信息（使用 split 列）==========
 @st.cache_data
 def load_feature_info():
-    df = pd.read_csv('Mg_MOF_74.csv')   # 请确认文件名正确
-    
-    # 按 split 列分离训练集和测试集
+    df = pd.read_csv('Mg_MOF_74.csv')
     train_data = df[df['split'] == 'train'].copy()
     test_data = df[df['split'] == 'test'].copy()
-    
     target_col = 'Adsorption_capacity_mmol_g'
     
     X_train = train_data.drop(columns=[target_col, 'split'])
     y_train = train_data[target_col]
     
-    # 特征列
     numeric_cols = ['Molar ratio', 'SBET_m2_g', 'Vpore_cm3_g', 'dpore']
     fixed_cols = ['Pressure_MPa', 'Temperature_K']
     cat_vars_names = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
-    all_cols = X_train.columns.tolist()   # 保持与模型训练时完全一致的顺序
+    all_cols = X_train.columns.tolist()
     
     # 解析分类变量类别
     cat_vars = {name: [] for name in cat_vars_names}
@@ -98,10 +92,48 @@ def load_feature_info():
     for col in numeric_cols:
         numeric_bounds[col] = (X_train[col].min(), X_train[col].max())
     
-    # SBET/Vpore 比值约束（基于训练数据）
+    # SBET/Vpore 比值约束
     ratio_train = X_train['SBET_m2_g'] / (X_train['Vpore_cm3_g'] + 1e-6)
     q_low = ratio_train.quantile(0.025)
     q_high = ratio_train.quantile(0.975)
+    
+    # ===== 新增分组约束：基于合成条件组合的结构特性边界 =====
+    # 为每个样本解析出四个分类变量的具体值
+    def get_cat_value(row, var_name, cat_vars_dict):
+        """从one-hot编码的行中提取分类变量的实际类别"""
+        for cat in cat_vars_dict[var_name]:
+            col_name = f"{var_name}_{cat}"
+            if col_name in row and row[col_name] == 1:
+                return cat
+        return None  # 理论上每行必有一个为1
+    
+    group_bounds = {}  # 键: (Mg_source, Solvent, Treatment, Morphology) 元组
+    for idx, row in X_train.iterrows():
+        mg = get_cat_value(row, 'Mg_source', cat_vars)
+        sol = get_cat_value(row, 'Solvent', cat_vars)
+        treat = get_cat_value(row, 'Treatment', cat_vars)
+        morph = get_cat_value(row, 'Morphology', cat_vars)
+        if None in (mg, sol, treat, morph):
+            continue
+        key = (mg, sol, treat, morph)
+        sbet = row['SBET_m2_g']
+        vpore = row['Vpore_cm3_g']
+        dpore = row['dpore']
+        if key not in group_bounds:
+            group_bounds[key] = {
+                'SBET': [sbet, sbet],
+                'Vpore': [vpore, vpore],
+                'dpore': [dpore, dpore]
+            }
+        else:
+            group_bounds[key]['SBET'][0] = min(group_bounds[key]['SBET'][0], sbet)
+            group_bounds[key]['SBET'][1] = max(group_bounds[key]['SBET'][1], sbet)
+            group_bounds[key]['Vpore'][0] = min(group_bounds[key]['Vpore'][0], vpore)
+            group_bounds[key]['Vpore'][1] = max(group_bounds[key]['Vpore'][1], vpore)
+            group_bounds[key]['dpore'][0] = min(group_bounds[key]['dpore'][0], dpore)
+            group_bounds[key]['dpore'][1] = max(group_bounds[key]['dpore'][1], dpore)
+    # 过滤样本数过少的组（可选，保留所有）
+    # ==================================================
     
     return {
         'numeric_cols': numeric_cols,
@@ -110,6 +142,7 @@ def load_feature_info():
         'all_cols': all_cols,
         'numeric_bounds': numeric_bounds,
         'ratio_bounds': (q_low, q_high),
+        'group_bounds': group_bounds,      # 新增
         'X_train': X_train,
         'y_train': y_train
     }
@@ -121,11 +154,12 @@ cat_vars = info['cat_vars']
 all_cols = info['all_cols']
 numeric_bounds = info['numeric_bounds']
 ratio_bounds = info['ratio_bounds']
+group_bounds = info['group_bounds']       # 新增
 
-# ========== 约束和目标函数 ==========
-def constraint_penalty(x):
-    sbet = x[1]      # SBET_m2_g 是第二个连续变量（索引1）
-    vpore = x[2]     # Vpore_cm3_g 是第三个（索引2）
+# ========== 原有约束：SBET/Vpore 比值惩罚 ==========
+def ratio_penalty(cont_vals):
+    sbet = cont_vals[1]      # SBET_m2_g 是第二个连续变量（索引1）
+    vpore = cont_vals[2]     # Vpore_cm3_g 是第三个（索引2）
     ratio = sbet / (vpore + 1e-6)
     q_low, q_high = ratio_bounds
     penalty = 0.0
@@ -135,33 +169,71 @@ def constraint_penalty(x):
         penalty = 1000 * (ratio - q_high)
     return penalty
 
-def objective_func(x, T_target, P_target, Q_target, mode):
+# ===== 新增分组约束惩罚 =====
+def group_constraint_penalty(cont_vals, cat_names, penalty_weight=100.0):
+    """
+    检查候选解的合成条件组合是否存在于训练数据分组中，
+    若存在则验证 SBET, Vpore, dpore 是否在对应边界内，
+    超出则施加与相对偏离程度成正比的惩罚。
+    """
+    key = tuple(cat_names)  # (Mg_source, Solvent, Treatment, Morphology)
+    if key not in group_bounds:
+        return 0.0  # 未出现过的组合，暂不惩罚（可后续添加）
+    bounds = group_bounds[key]
+    penalty = 0.0
+    # SBET
+    sbet = cont_vals[1]
+    sbet_min, sbet_max = bounds['SBET']
+    if sbet < sbet_min:
+        rel = (sbet_min - sbet) / (sbet_min + 1e-6)
+        penalty += penalty_weight * rel
+    elif sbet > sbet_max:
+        rel = (sbet - sbet_max) / (sbet_max + 1e-6)
+        penalty += penalty_weight * rel
+    # Vpore
+    vpore = cont_vals[2]
+    vpore_min, vpore_max = bounds['Vpore']
+    if vpore < vpore_min:
+        rel = (vpore_min - vpore) / (vpore_min + 1e-6)
+        penalty += penalty_weight * rel
+    elif vpore > vpore_max:
+        rel = (vpore - vpore_max) / (vpore_max + 1e-6)
+        penalty += penalty_weight * rel
+    # dpore
+    dpore = cont_vals[3]
+    dpore_min, dpore_max = bounds['dpore']
+    if dpore < dpore_min:
+        rel = (dpore_min - dpore) / (dpore_min + 1e-6)
+        penalty += penalty_weight * rel
+    elif dpore > dpore_max:
+        rel = (dpore - dpore_max) / (dpore_max + 1e-6)
+        penalty += penalty_weight * rel
+    return penalty
+# ==================================================
+
+def objective_func(x, T_target, P_target, Q_target, mode, group_penalty_weight):
     n_cont = len(numeric_cols)
     cont_vals = x[:n_cont]
     cat_indices = x[n_cont:].astype(int)
 
     # 索引合法性修正
+    cat_names = []
     for j, (var, cats) in enumerate(cat_vars.items()):
         if cat_indices[j] < 0 or cat_indices[j] >= len(cats):
             cat_indices[j] = np.clip(cat_indices[j], 0, len(cats)-1)
+        cat_names.append(cats[cat_indices[j]])   # 获取类别名称用于分组约束
 
     # 构建特征向量
     x_vec = np.zeros(len(all_cols))
-
-    # 填充连续变量
     for i, col in enumerate(numeric_cols):
         idx = all_cols.index(col)
         x_vec[idx] = cont_vals[i]
-
-    # 填充固定温度压力
     idx_p = all_cols.index('Pressure_MPa')
     idx_t = all_cols.index('Temperature_K')
     x_vec[idx_p] = P_target
     x_vec[idx_t] = T_target
-
-    # 填充分类变量（独热编码）
     for j, (var, cats) in enumerate(cat_vars.items()):
-        cat_name = cats[cat_indices[j]]
+        cat_name = cat_names[j]
         onehot_col = f"{var}_{cat_name}"
         if onehot_col in all_cols:
             idx = all_cols.index(onehot_col)
@@ -170,38 +242,21 @@ def objective_func(x, T_target, P_target, Q_target, mode):
     x_scaled = scaler.transform(x_vec.reshape(1, -1))
     pred = model.predict(x_scaled)[0]
 
-    penalty = constraint_penalty(cont_vals)
+    # 惩罚项
+    penalty_ratio = ratio_penalty(cont_vals)
+    penalty_group = group_constraint_penalty(cont_vals, cat_names, group_penalty_weight)
 
     if mode == 'target':
-        return abs(pred - Q_target) + penalty
+        return abs(pred - Q_target) + penalty_ratio + penalty_group
     else:  # maximize
-        return -pred + penalty
+        return -pred + penalty_ratio + penalty_group
 
 # ========== 侧边栏输入 ==========
 st.sidebar.header("Environment Conditions")
+T_target = st.sidebar.number_input("Temperature (K)", value=298.0, min_value=273.0, max_value=333.0, step=1.0)
+P_target = st.sidebar.number_input("Pressure (MPa)", value=0.1, min_value=0.0001, max_value=2.9491, step=0.1, format="%.4f")
 
-T_target = st.sidebar.number_input(
-    "Temperature (K)",
-    value=298.0,
-    min_value=273.0,
-    max_value=333.0,
-    step=1.0
-)
-
-P_target = st.sidebar.number_input(
-    "Pressure (MPa)",
-    value=0.1,
-    min_value=0.0001,
-    max_value=2.9491,
-    step=0.1,
-    format="%.4f"
-)
-
-mode = st.sidebar.radio(
-    "Optimization Mode",
-    ("target", "max"),
-    format_func=lambda x: "Target uptake" if x == "target" else "Maximize uptake"
-)
+mode = st.sidebar.radio("Optimization Mode", ("target", "max"), format_func=lambda x: "Target uptake" if x == "target" else "Maximize uptake")
 if mode == "target":
     Q_target = st.sidebar.number_input("Target uptake (mmol/g)", value=3.5, step=0.1)
 else:
@@ -210,11 +265,15 @@ else:
 top_n = st.sidebar.slider("Number of candidates", min_value=1, max_value=10, value=5)
 use_clustering = st.sidebar.checkbox("Use clustering to select diverse candidates", value=True)
 
-# 添加 GA 参数调节以平衡速度
 st.sidebar.markdown("---")
-st.sidebar.subheader("GA Parameters (adjust for speed)")
+st.sidebar.subheader("GA Parameters")
 pop_size = st.sidebar.slider("Population size", min_value=50, max_value=300, value=100, step=10)
 max_iter = st.sidebar.slider("Max iterations", min_value=50, max_value=500, value=150, step=10)
+
+# ===== 新增：分组约束惩罚权重滑块 =====
+group_penalty_weight = st.sidebar.slider("Group constraint penalty weight", min_value=0.0, max_value=500.0, value=100.0, step=10.0,
+                                         help="惩罚强度，值越大越强制结构特性落入历史成功组合的边界内。设为0可关闭此约束。")
+st.sidebar.markdown("---")
 
 run_opt = st.sidebar.button("Start Optimization")
 
@@ -231,18 +290,16 @@ if run_opt:
         ub = [numeric_bounds[col][1] for col in numeric_cols] + [len(cat_vars[var]) - 0.5 for var in cat_vars]
 
         ga = GA(
-            func=lambda x: objective_func(x, T_target, P_target, Q_target, mode),
+            func=lambda x: objective_func(x, T_target, P_target, Q_target, mode, group_penalty_weight),
             n_dim=n_dim,
             size_pop=pop_size,
             max_iter=max_iter,
             lb=lb,
             ub=ub,
-            precision=1e-3          # 适当降低精度以加速
+            precision=1e-3
         )
 
         best_x, best_y = ga.run()
-
-        # 获取所有最终种群个体
         final_X = ga.X
         final_Y = ga.Y
 
@@ -253,12 +310,10 @@ if run_opt:
             X_cont_scaled = scaler4cluster.fit_transform(X_cont)
             X_cat = final_X[:, n_cont:].astype(int)
             X_cluster = np.hstack([X_cont_scaled, X_cat * 0.5])
-
             n_clusters = min(top_n, len(final_X))
             kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10).fit(X_cluster)
             labels = kmeans.labels_
             centers = kmeans.cluster_centers_
-
             representative_idx = []
             for i in range(n_clusters):
                 cluster_points = X_cluster[labels == i]
@@ -268,11 +323,9 @@ if run_opt:
                 dist = np.linalg.norm(cluster_points - center, axis=1)
                 nearest_idx = np.where(labels == i)[0][np.argmin(dist)]
                 representative_idx.append(nearest_idx)
-
             if len(representative_idx) < top_n:
                 additional = [i for i in np.argsort(final_Y)[:top_n] if i not in representative_idx]
                 representative_idx.extend(additional[:top_n - len(representative_idx)])
-
             top_idx = representative_idx[:top_n]
         else:
             sorted_idx = np.argsort(final_Y)
@@ -318,7 +371,6 @@ if run_opt:
 
         elapsed = time.time() - start_time
         st.success(f"Optimization completed in {elapsed:.1f} seconds.")
-
         st.session_state['candidates'] = candidates
         st.session_state['mode'] = mode
         st.session_state['Q_target'] = Q_target if mode == 'target' else None
@@ -332,28 +384,23 @@ if 'candidates' in st.session_state:
     st.header("Optimization Results")
     st.subheader(f"Top {len(candidates)} candidate solutions")
 
-    # 转换为DataFrame
     df_candidates = pd.DataFrame([r[0] for r in candidates])
     df_candidates['Predicted_Adsorption'] = [r[1] for r in candidates]
     df_candidates['Objective'] = [r[2] for r in candidates]
 
-    # 创建显示用副本，将分类变量值映射为可读名称，但列名只修改 Treatment -> Modification
     df_display = df_candidates.copy()
     cat_cols = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
     for col in cat_cols:
         df_display[col] = df_display[col].apply(lambda x: plot_label_mapping.get(f'{col}_{x}', x))
-
-    # 只将 Treatment 列名改为 Modification，其他列名保持原样
     df_display = df_display.rename(columns={'Treatment': 'Modification'})
 
-    # 显示表格
     st.dataframe(
         df_display.style.format(
             {col: "{:.4f}" for col in numeric_cols + ['Predicted_Adsorption', 'Objective']}
         )
     )
 
-    # ---------- CSV 下载（列名处理）----------
+    # CSV下载
     df_csv = df_candidates.copy()
     for col in cat_cols:
         df_csv[col] = df_csv[col].apply(lambda x: plot_label_mapping.get(f'{col}_{x}', x))
@@ -361,31 +408,26 @@ if 'candidates' in st.session_state:
     csv = df_csv.to_csv(index=False).encode('utf-8')
     st.download_button("Download candidates as CSV", data=csv, file_name="candidates.csv", mime="text/csv")
 
-    # ---------- 重新设计的可视化（六子图）----------
+    # 可视化部分（与原代码相同，略）
     st.markdown("### Visualizations")
-
-    # 准备数据（仍使用原始 df_candidates，避免映射干扰）
     df_viz = df_candidates.copy()
     n_candidates = len(df_viz)
-
-    # 颜色映射：Set3_r（离散反转色图）
     cmap = plt.cm.Set3_r
     norm = plt.Normalize(df_viz['Predicted_Adsorption'].min(), df_viz['Predicted_Adsorption'].max())
     colors_ads = [cmap(norm(val)) for val in df_viz['Predicted_Adsorption']]
 
-    # 创建图形
     fig = plt.figure(figsize=(20, 12))
     gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.35,
                            left=0.08, right=0.92, bottom=0.1, top=0.92)
 
-    ax_a = fig.add_subplot(gs[0, 0])  # (a) SBET vs Vpore
-    ax_b = fig.add_subplot(gs[0, 1])  # (b) dpore vs Adsorption
-    ax_c = fig.add_subplot(gs[0, 2])  # (c) Molar ratio vs Adsorption
-    ax_d = fig.add_subplot(gs[1, 0])  # (d) 合成条件分布
-    ax_e = fig.add_subplot(gs[1, 1])  # (e) 性能排序
-    ax_f = fig.add_subplot(gs[1, 2])  # (f) 平行坐标
+    ax_a = fig.add_subplot(gs[0, 0])
+    ax_b = fig.add_subplot(gs[0, 1])
+    ax_c = fig.add_subplot(gs[0, 2])
+    ax_d = fig.add_subplot(gs[1, 0])
+    ax_e = fig.add_subplot(gs[1, 1])
+    ax_f = fig.add_subplot(gs[1, 2])
 
-    # ----- (a) SBET vs Vpore -----
+    # (a) SBET vs Vpore
     sc_a = ax_a.scatter(df_viz['SBET_m2_g'], df_viz['Vpore_cm3_g'],
                         c=df_viz['Predicted_Adsorption'], cmap='Set3_r',
                         s=100, edgecolor='k', linewidth=0.8, zorder=5)
@@ -399,7 +441,7 @@ if 'candidates' in st.session_state:
     cbar_a.set_label(r'CO$_2$ uptake (mmol/g)', fontsize=12, fontweight='bold')
     plt.setp(cbar_a.ax.get_yticklabels(), fontweight='bold')
 
-    # ----- (b) dpore vs Adsorption -----
+    # (b) dpore vs Adsorption
     sc_b = ax_b.scatter(df_viz['dpore'], df_viz['Predicted_Adsorption'],
                         c=df_viz['Molar ratio'], cmap='Set3_r',
                         s=100, edgecolor='k', linewidth=0.8, zorder=5)
@@ -413,7 +455,7 @@ if 'candidates' in st.session_state:
     cbar_b.set_label('Mg/ligand ratio', fontsize=12, fontweight='bold')
     plt.setp(cbar_b.ax.get_yticklabels(), fontweight='bold')
 
-    # ----- (c) Molar ratio vs Adsorption -----
+    # (c) Molar ratio vs Adsorption
     morph_categories = df_viz['Morphology'].astype('category')
     morph_codes = morph_categories.cat.codes
     unique_morphs = morph_categories.cat.categories
@@ -431,13 +473,13 @@ if 'candidates' in st.session_state:
     legend = ax_c.legend(handles, [plot_label_mapping.get('Morphology_'+m, m) for m in unique_morphs],
                          title='Morphology', fontsize=9, loc='upper left', bbox_to_anchor=(1,1),
                          prop={'weight':'bold'})
-    plt.setp(legend.get_title(), fontweight='bold')   # 图例标题加粗
-    # ----- (d) 合成条件分布 -----
+    plt.setp(legend.get_title(), fontweight='bold')
+
+    # (d) 合成条件分布
     gs_d = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[1,0], hspace=0.35, wspace=0.35)
     axes_d = [fig.add_subplot(gs_d[i, j]) for i in range(2) for j in range(2)]
     cat_vars_display = ['Mg_source', 'Solvent', 'Treatment', 'Morphology']
     titles_d = ['(d1) Mg source', '(d2) Solvent', '(d3) Modification', '(d4) Morphology']
-    
     for idx, (var, ax, title) in enumerate(zip(cat_vars_display, axes_d, titles_d)):
         counts = df_viz[var].value_counts()
         cats = [plot_label_mapping.get(f'{var}_{c}', c) for c in counts.index]
@@ -456,7 +498,7 @@ if 'candidates' in st.session_state:
                     ha='center', va='bottom', fontsize=11, fontweight='bold')
     ax_d.axis('off')
 
-    # ----- (e) 性能排序条形图 -----
+    # (e) 性能排序条形图
     x_pos = np.arange(1, n_candidates+1)
     bars_e = ax_e.bar(x_pos, df_viz['Predicted_Adsorption'], color=colors_ads, edgecolor='black')
     ax_e.set_xlabel('Candidate', fontsize=13, fontweight='bold')
@@ -470,7 +512,7 @@ if 'candidates' in st.session_state:
         ax_e.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02, f'{val:.2f}',
                   ha='center', va='bottom', fontsize=10, fontweight='bold')
 
-    # ----- (f) 平行坐标图 -----
+    # (f) 平行坐标图
     cont_all = ['Molar ratio', 'SBET_m2_g', 'Vpore_cm3_g', 'dpore', 'Predicted_Adsorption']
     scaler_parallel = MinMaxScaler()
     data_parallel = scaler_parallel.fit_transform(df_viz[cont_all])
@@ -495,17 +537,3 @@ if 'candidates' in st.session_state:
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
