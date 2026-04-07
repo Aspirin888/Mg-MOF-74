@@ -11,6 +11,7 @@ from sko.GA import GA
 import joblib
 import warnings
 import time
+import io  # 新增：用于 CSV 下载
 
 warnings.filterwarnings('ignore')
 
@@ -59,7 +60,7 @@ def load_model():
 
 model, scaler = load_model()
 
-# ========== 从数据集提取特征信息（使用 split 列）==========
+# ========== 从数据集提取特征信息 ==========
 @st.cache_data
 def load_feature_info():
     df = pd.read_csv('Mg_MOF_74.csv')
@@ -87,7 +88,7 @@ def load_feature_info():
     for var in cat_vars:
         cat_vars[var].sort()
     
-    # 单变量边界（基于训练数据）
+    # 单变量边界
     numeric_bounds = {}
     for col in numeric_cols:
         numeric_bounds[col] = (X_train[col].min(), X_train[col].max())
@@ -97,17 +98,15 @@ def load_feature_info():
     q_low = ratio_train.quantile(0.025)
     q_high = ratio_train.quantile(0.975)
     
-    # ===== 新增分组约束：基于合成条件组合的结构特性边界 =====
-    # 为每个样本解析出四个分类变量的具体值
+    # 分组约束边界
     def get_cat_value(row, var_name, cat_vars_dict):
-        """从one-hot编码的行中提取分类变量的实际类别"""
         for cat in cat_vars_dict[var_name]:
             col_name = f"{var_name}_{cat}"
             if col_name in row and row[col_name] == 1:
                 return cat
-        return None  # 理论上每行必有一个为1
+        return None
     
-    group_bounds = {}  # 键: (Mg_source, Solvent, Treatment, Morphology) 元组
+    group_bounds = {}
     for idx, row in X_train.iterrows():
         mg = get_cat_value(row, 'Mg_source', cat_vars)
         sol = get_cat_value(row, 'Solvent', cat_vars)
@@ -132,8 +131,6 @@ def load_feature_info():
             group_bounds[key]['Vpore'][1] = max(group_bounds[key]['Vpore'][1], vpore)
             group_bounds[key]['dpore'][0] = min(group_bounds[key]['dpore'][0], dpore)
             group_bounds[key]['dpore'][1] = max(group_bounds[key]['dpore'][1], dpore)
-    # 过滤样本数过少的组（可选，保留所有）
-    # ==================================================
     
     return {
         'numeric_cols': numeric_cols,
@@ -142,7 +139,7 @@ def load_feature_info():
         'all_cols': all_cols,
         'numeric_bounds': numeric_bounds,
         'ratio_bounds': (q_low, q_high),
-        'group_bounds': group_bounds,      # 新增
+        'group_bounds': group_bounds,
         'X_train': X_train,
         'y_train': y_train
     }
@@ -154,12 +151,12 @@ cat_vars = info['cat_vars']
 all_cols = info['all_cols']
 numeric_bounds = info['numeric_bounds']
 ratio_bounds = info['ratio_bounds']
-group_bounds = info['group_bounds']       # 新增
+group_bounds = info['group_bounds']
 
 # ========== 原有约束：SBET/Vpore 比值惩罚 ==========
 def ratio_penalty(cont_vals):
-    sbet = cont_vals[1]      # SBET_m2_g 是第二个连续变量（索引1）
-    vpore = cont_vals[2]     # Vpore_cm3_g 是第三个（索引2）
+    sbet = cont_vals[1]
+    vpore = cont_vals[2]
     ratio = sbet / (vpore + 1e-6)
     q_low, q_high = ratio_bounds
     penalty = 0.0
@@ -169,19 +166,13 @@ def ratio_penalty(cont_vals):
         penalty = 1000 * (ratio - q_high)
     return penalty
 
-# ===== 新增分组约束惩罚 =====
+# ===== 分组约束惩罚 =====
 def group_constraint_penalty(cont_vals, cat_names, penalty_weight=100.0):
-    """
-    检查候选解的合成条件组合是否存在于训练数据分组中，
-    若存在则验证 SBET, Vpore, dpore 是否在对应边界内，
-    超出则施加与相对偏离程度成正比的惩罚。
-    """
-    key = tuple(cat_names)  # (Mg_source, Solvent, Treatment, Morphology)
+    key = tuple(cat_names)
     if key not in group_bounds:
-        return 0.0  # 未出现过的组合，暂不惩罚（可后续添加）
+        return 0.0
     bounds = group_bounds[key]
     penalty = 0.0
-    # SBET
     sbet = cont_vals[1]
     sbet_min, sbet_max = bounds['SBET']
     if sbet < sbet_min:
@@ -190,7 +181,6 @@ def group_constraint_penalty(cont_vals, cat_names, penalty_weight=100.0):
     elif sbet > sbet_max:
         rel = (sbet - sbet_max) / (sbet_max + 1e-6)
         penalty += penalty_weight * rel
-    # Vpore
     vpore = cont_vals[2]
     vpore_min, vpore_max = bounds['Vpore']
     if vpore < vpore_min:
@@ -199,7 +189,6 @@ def group_constraint_penalty(cont_vals, cat_names, penalty_weight=100.0):
     elif vpore > vpore_max:
         rel = (vpore - vpore_max) / (vpore_max + 1e-6)
         penalty += penalty_weight * rel
-    # dpore
     dpore = cont_vals[3]
     dpore_min, dpore_max = bounds['dpore']
     if dpore < dpore_min:
@@ -209,21 +198,18 @@ def group_constraint_penalty(cont_vals, cat_names, penalty_weight=100.0):
         rel = (dpore - dpore_max) / (dpore_max + 1e-6)
         penalty += penalty_weight * rel
     return penalty
-# ==================================================
 
 def objective_func(x, T_target, P_target, Q_target, mode, group_penalty_weight):
     n_cont = len(numeric_cols)
     cont_vals = x[:n_cont]
     cat_indices = x[n_cont:].astype(int)
 
-    # 索引合法性修正
     cat_names = []
     for j, (var, cats) in enumerate(cat_vars.items()):
         if cat_indices[j] < 0 or cat_indices[j] >= len(cats):
             cat_indices[j] = np.clip(cat_indices[j], 0, len(cats)-1)
-        cat_names.append(cats[cat_indices[j]])   # 获取类别名称用于分组约束
+        cat_names.append(cats[cat_indices[j]])
 
-    # 构建特征向量
     x_vec = np.zeros(len(all_cols))
     for i, col in enumerate(numeric_cols):
         idx = all_cols.index(col)
@@ -242,14 +228,45 @@ def objective_func(x, T_target, P_target, Q_target, mode, group_penalty_weight):
     x_scaled = scaler.transform(x_vec.reshape(1, -1))
     pred = model.predict(x_scaled)[0]
 
-    # 惩罚项
     penalty_ratio = ratio_penalty(cont_vals)
     penalty_group = group_constraint_penalty(cont_vals, cat_names, group_penalty_weight)
 
     if mode == 'target':
         return abs(pred - Q_target) + penalty_ratio + penalty_group
-    else:  # maximize
+    else:
         return -pred + penalty_ratio + penalty_group
+
+# ===== 新增：根据候选字典和压力、温度构造特征向量并预测 =====
+def predict_from_candidate(candidate_dict, pressure_mpa, temperature_k):
+    """candidate_dict 包含所有特征（连续+分类），返回模型预测值"""
+    x_vec = np.zeros(len(all_cols))
+    # 连续变量
+    for col in numeric_cols:
+        idx = all_cols.index(col)
+        x_vec[idx] = candidate_dict[col]
+    # 固定温度压力
+    idx_p = all_cols.index('Pressure_MPa')
+    idx_t = all_cols.index('Temperature_K')
+    x_vec[idx_p] = pressure_mpa
+    x_vec[idx_t] = temperature_k
+    # 分类变量（独热）
+    for var in cat_vars:
+        cat_name = candidate_dict[var]
+        onehot_col = f"{var}_{cat_name}"
+        if onehot_col in all_cols:
+            idx = all_cols.index(onehot_col)
+            x_vec[idx] = 1.0
+    x_scaled = scaler.transform(x_vec.reshape(1, -1))
+    return model.predict(x_scaled)[0]
+
+# ===== 新增：生成等温线数据 =====
+def generate_isotherm(candidate_dict, temp_k, pressure_points):
+    """pressure_points: list of pressure in MPa, 返回对应预测吸附量的列表"""
+    preds = []
+    for p in pressure_points:
+        pred = predict_from_candidate(candidate_dict, p, temp_k)
+        preds.append(pred)
+    return preds
 
 # ========== 侧边栏输入 ==========
 st.sidebar.header("Environment Conditions")
@@ -270,7 +287,6 @@ st.sidebar.subheader("GA Parameters")
 pop_size = st.sidebar.slider("Population size", min_value=50, max_value=300, value=100, step=10)
 max_iter = st.sidebar.slider("Max iterations", min_value=50, max_value=500, value=150, step=10)
 
-# ===== 新增：分组约束惩罚权重滑块 =====
 group_penalty_weight = st.sidebar.slider("Group constraint penalty weight", min_value=0.0, max_value=500.0, value=100.0, step=10.0,
                                          help="惩罚强度，值越大越强制结构特性落入历史成功组合的边界内。设为0可关闭此约束。")
 st.sidebar.markdown("---")
@@ -408,7 +424,7 @@ if 'candidates' in st.session_state:
     csv = df_csv.to_csv(index=False).encode('utf-8')
     st.download_button("Download candidates as CSV", data=csv, file_name="candidates.csv", mime="text/csv")
 
-    # 可视化部分（与原代码相同，略）
+    # 可视化部分（原六子图）
     st.markdown("### Visualizations")
     df_viz = df_candidates.copy()
     n_candidates = len(df_viz)
@@ -534,6 +550,57 @@ if 'candidates' in st.session_state:
 
     plt.suptitle(r'Reverse design of Mg-MOF-74 for CO$_2$ capture', fontsize=24, weight='bold', y=0.98)
     st.pyplot(fig)
+
+    # ========== 新增：等温线预测功能 ==========
+    st.markdown("---")
+    st.subheader("📈 Predict adsorption isotherm for a candidate")
+
+    # 让用户选择候选解（索引从1开始）
+    candidate_indices = list(range(1, len(candidates) + 1))
+    selected_idx = st.selectbox("Select candidate number", candidate_indices, index=0)
+    selected_candidate_dict = candidates[selected_idx - 1][0]  # 字典
+
+    # 压力点设置（MPa），默认从0.001到0.1，共15个点（可自定义）
+    st.markdown("**Pressure range (MPa)**")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        p_min = st.number_input("Min pressure", value=0.001, min_value=0.0001, max_value=0.01, format="%.4f")
+    with col2:
+        p_max = st.number_input("Max pressure", value=0.1, min_value=0.01, max_value=2.0, format="%.4f")
+    with col3:
+        num_points = st.slider("Number of points", min_value=5, max_value=30, value=15)
+
+    # 固定温度使用当前侧边栏的温度（或允许用户临时修改）
+    use_current_temp = st.checkbox("Use current temperature from sidebar", value=True)
+    if use_current_temp:
+        isotherm_temp = T_target
+    else:
+        isotherm_temp = st.number_input("Temperature for isotherm (K)", value=298.0, min_value=273.0, max_value=333.0)
+
+    if st.button("Generate isotherm"):
+        with st.spinner("Generating isotherm..."):
+            pressures = np.linspace(p_min, p_max, num_points)
+            preds = generate_isotherm(selected_candidate_dict, isotherm_temp, pressures)
+
+            # 绘制等温线图
+            fig_iso, ax_iso = plt.subplots(figsize=(8, 5))
+            ax_iso.plot(pressures, preds, 'o-', color='#1f77b4', linewidth=2, markersize=6, label='Model prediction')
+            ax_iso.set_xlabel('Pressure (MPa)', fontsize=12, fontweight='bold')
+            ax_iso.set_ylabel(r'CO$_2$ uptake (mmol/g)', fontsize=12, fontweight='bold')
+            ax_iso.set_title(f'Predicted adsorption isotherm at {isotherm_temp} K\nCandidate {selected_idx}', fontsize=14, fontweight='bold')
+            ax_iso.grid(True, linestyle='--', alpha=0.3)
+            ax_iso.legend()
+            st.pyplot(fig_iso)
+
+            # 提供数据下载
+            iso_df = pd.DataFrame({'Pressure_MPa': pressures, 'Predicted_uptake_mmol_g': preds})
+            csv_iso = iso_df.to_csv(index=False).encode('utf-8')
+            st.download_button("Download isotherm data as CSV", data=csv_iso, file_name=f"isotherm_candidate_{selected_idx}.csv", mime="text/csv")
+
+            # 可选：显示预测值表格
+            with st.expander("Show predicted values"):
+                st.dataframe(iso_df.style.format({'Pressure_MPa': '{:.4f}', 'Predicted_uptake_mmol_g': '{:.3f}'}))
+    # ========================================
 
 else:
     st.info("Please set parameters in the sidebar and click 'Start Optimization'.")
