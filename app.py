@@ -268,6 +268,7 @@ def generate_isotherm(candidate_dict, temp_k, pressure_points):
         preds.append(pred)
     return preds
 
+
 # ========== 侧边栏输入 ==========
 st.sidebar.header("Environment Conditions")
 T_target = st.sidebar.number_input("Temperature (K)", value=298.0, min_value=273.0, max_value=333.0, step=1.0)
@@ -284,11 +285,13 @@ use_clustering = st.sidebar.checkbox("Use clustering to select diverse candidate
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("GA Parameters")
-pop_size = st.sidebar.slider("Population size", min_value=50, max_value=300, value=100, step=10)
-max_iter = st.sidebar.slider("Max iterations", min_value=50, max_value=500, value=150, step=10)
+pop_size = st.sidebar.slider("Population size", min_value=50, max_value=300, value=100, step=10,
+                             help="Number of individuals in each generation. Larger populations explore more broadly but increase runtime.")
+max_iter = st.sidebar.slider("Max iterations", min_value=50, max_value=500, value=150, step=10,
+                             help="Maximum number of generations. Higher values allow more thorough convergence but take longer.")
 
 group_penalty_weight = st.sidebar.slider("Group constraint penalty weight", min_value=0.0, max_value=500.0, value=100.0, step=10.0,
-                                         help="惩罚强度，值越大越强制结构特性落入历史成功组合的边界内。设为0可关闭此约束。")
+                                         help="Penalty strength. Larger values force structural properties to stay within the boundaries of historically successful combinations. Set to 0 to disable this constraint.")
 st.sidebar.markdown("---")
 
 run_opt = st.sidebar.button("Start Optimization")
