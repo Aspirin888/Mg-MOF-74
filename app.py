@@ -551,7 +551,7 @@ if 'candidates' in st.session_state:
     cbar_f.set_label(r'CO$_2$ uptake (mmol/g)', fontsize=12, fontweight='bold')
     plt.setp(cbar_f.ax.get_yticklabels(), fontweight='bold')
 
-    plt.suptitle(r'Reverse design of Mg-MOF-74 for CO$_2$ capture', fontsize=24, weight='bold', y=0.98)
+    plt.suptitle(r'Goal-oriented design of Mg-MOF-74 for CO$_2$ capture', fontsize=24, weight='bold', y=0.98)
     st.pyplot(fig)
 
     # ========== 新增：等温线预测功能 ==========
