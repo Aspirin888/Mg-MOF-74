@@ -16,8 +16,8 @@ import io  # 新增：用于 CSV 下载
 warnings.filterwarnings('ignore')
 
 # ========== 设置页面 ==========
-st.set_page_config(page_title="Mg-MOF-74 Inverse Design Platform", layout="wide")
-st.title("Mg-MOF-74 Adsorbent Inverse Design Platform")
+st.set_page_config(page_title="Mg-MOF-74 Goal-oriented Design Platform", layout="wide")
+st.title("Mg-MOF-74 Adsorbent Goal-oriented Design Platform")
 st.markdown("Based on Bag_ET_GB_RF_XGB model and genetic algorithm to search for optimal synthesis and structural parameters for CO₂ capture.")
 
 # ========== 英文标签映射 ==========
